@@ -1,0 +1,244 @@
+#!/usr/bin/env python3
+"""EduMetrics — Standalone Academic Performance Analytics CLI.
+
+Executes core academic performance analytics independently of the web dashboard.
+Fully satisfies EWB Courses Assignment requirements using pure Python, NumPy, and Pandas.
+"""
+
+import sys
+import os
+import argparse
+from typing import Dict, List, Optional
+import pandas as pd
+
+from core.loader import load_csv_from_path, IngestionError
+from core.validation import validate_dataset
+from core.grading import GradingPolicy, GradeBoundary, evaluate_students
+from core.analytics import (
+    compute_class_summary,
+    compute_subject_analytics,
+    compute_department_summary,
+    identify_academic_attention_cases,
+    get_top_performers,
+)
+from core.reports import generate_text_summary, generate_sanitized_csv
+
+
+def infer_subject_configs(
+    columns: List[str],
+    excluded: List[str],
+    dataset_name: str,
+) -> Dict[str, float]:
+    """Infer subject columns and assign default maximum marks.
+
+    For datasets like sample_college.csv, labs and projects default to 50 marks,
+    while theory subjects default to 100 marks.
+    """
+    subjects: Dict[str, float] = {}
+    for col in columns:
+        if col.lower() not in [e.lower() for e in excluded if e]:
+            # College lab / project heuristic (or 100 by default)
+            col_lower = col.lower()
+            if "lab" in col_lower or "project" in col_lower or "practical" in col_lower:
+                subjects[col] = 50.0
+            else:
+                subjects[col] = 100.0
+    return subjects
+
+
+def format_table(df: pd.DataFrame, max_cols: int = 10) -> str:
+    """Format a DataFrame into a clean text table without external dependencies."""
+    if df.empty:
+        return "  (No records)"
+    display_df = df.iloc[:, :max_cols].copy()
+    return display_df.to_string(index=False)
+
+
+def run_cli(args: argparse.Namespace) -> int:
+    """Execute the end-to-end analytics workflow."""
+    print("=" * 78)
+    print("             EDUMETRICS — ACADEMIC PERFORMANCE ANALYTICS CLI")
+    print("=" * 78)
+
+    file_path = args.file
+    if not os.path.exists(file_path):
+        print(f"\n[ERROR] Specified file not found: '{file_path}'")
+        return 1
+
+    print(f"[*] Ingesting academic dataset: {file_path}")
+
+    # 1. Load CSV
+    try:
+        df_raw, raw_headers = load_csv_from_path(file_path)
+        print(f"[+] Successfully loaded {len(df_raw)} records across {len(raw_headers)} columns.")
+    except IngestionError as err:
+        print(f"\n[SECURITY/INGESTION ERROR] {err}")
+        return 1
+
+    # 2. Determine subject columns
+    excluded = [args.id_col, args.name_col, args.attendance_col]
+    if args.dept_col:
+        excluded.append(args.dept_col)
+
+    subject_configs = infer_subject_configs(raw_headers, excluded, os.path.basename(file_path))
+    if not subject_configs:
+        print("\n[ERROR] No subject mark columns could be identified in the dataset.")
+        return 1
+
+    print(f"[+] Identified {len(subject_configs)} subjects: "
+          f"{', '.join([f'{s} (Max: {m:.0f})' for s, m in subject_configs.items()])}")
+
+    # 3. Validate dataset
+    print("[*] Validating dataset records against academic integrity constraints...")
+    val_result = validate_dataset(
+        df=df_raw,
+        student_id_col=args.id_col,
+        name_col=args.name_col,
+        attendance_col=args.attendance_col,
+        subject_configs=subject_configs,
+        department_col=args.dept_col if args.dept_col in df_raw.columns else None,
+    )
+
+    if not val_result.is_valid:
+        print(f"\n[VALIDATION FAILED] Found {val_result.error_count} error(s):")
+        for err in val_result.errors[:10]:
+            print(f"  - {err}")
+        if val_result.error_count > 10:
+            print(f"  ... and {val_result.error_count - 10} additional errors.")
+        return 1
+
+    print(f"[+] Validation Passed cleanly with 0 errors and {val_result.warning_count} warning(s).")
+
+    # 4. Grading policy configuration
+    policy = GradingPolicy(
+        subject_pass_percentage=args.subject_pass,
+        aggregate_pass_percentage=args.aggregate_pass,
+        attendance_warning_threshold=args.attendance_warning,
+    )
+
+    # 5. Evaluate student performance
+    print("[*] Computing normalized scores, grades, and pass/fail statuses...")
+    df_evaluated = evaluate_students(
+        df=df_raw,
+        student_id_col=args.id_col,
+        name_col=args.name_col,
+        attendance_col=args.attendance_col,
+        subject_configs=subject_configs,
+        policy=policy,
+        department_col=args.dept_col if args.dept_col in df_raw.columns else None,
+    )
+
+    # 6. Analytics
+    class_summary = compute_class_summary(df_evaluated)
+    subject_metrics = compute_subject_analytics(df_evaluated, subject_configs, policy.subject_pass_percentage)
+    dept_summary = compute_department_summary(df_evaluated)
+    attention_students = identify_academic_attention_cases(df_evaluated, subject_configs, policy.subject_pass_percentage)
+    top_performers = get_top_performers(df_evaluated, n=args.top)
+
+    # 7. Print Report
+    report_text = generate_text_summary(
+        class_summary=class_summary,
+        subject_metrics=subject_metrics,
+        attention_students=attention_students,
+        policy=policy,
+        dataset_name=os.path.basename(file_path),
+    )
+    print("\n" + report_text)
+
+    # 8. Print Top Performers Leaderboard
+    print("\n" + "=" * 78)
+    print(f"  TOP {args.top} PERFORMERS LEADERBOARD (DETERMINISTIC RANKING)")
+    print("=" * 78)
+    leaderboard_cols = ["rank", "student_id", "student_name", "department", "percentage", "grade", "attendance"]
+    avail_cols = [c for c in leaderboard_cols if c in top_performers.columns]
+    print(format_table(top_performers[avail_cols]))
+
+    # 9. Print Department Summary if available
+    if not dept_summary.empty:
+        print("\n" + "=" * 78)
+        print("  DEPARTMENT-WISE COMPARISON")
+        print("=" * 78)
+        print(format_table(dept_summary))
+
+    # 10. Optional CSV Export
+    if args.export:
+        print(f"\n[*] Sanitizing and exporting evaluated report to: {args.export}")
+        sanitized_bytes = generate_sanitized_csv(df_evaluated)
+        try:
+            with open(args.export, "wb") as f_out:
+                f_out.write(sanitized_bytes)
+            print(f"[+] Successfully exported {len(df_evaluated)} sanitized student records.")
+        except OSError as e:
+            print(f"[ERROR] Failed to write export file: {e}")
+            return 1
+
+    print("\n[+] Analysis complete.")
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="EduMetrics: Standalone Academic Performance Analytics Engine",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--file", "-f",
+        default="data/sample_school.csv",
+        help="Path to the academic marks CSV dataset",
+    )
+    parser.add_argument(
+        "--id-col",
+        default="student_id",
+        help="Column header for Student Identifier",
+    )
+    parser.add_argument(
+        "--name-col",
+        default="student_name",
+        help="Column header for Student Name",
+    )
+    parser.add_argument(
+        "--attendance-col",
+        default="attendance",
+        help="Column header for Attendance Percentage",
+    )
+    parser.add_argument(
+        "--dept-col",
+        default="department",
+        help="Column header for Department / Section (optional)",
+    )
+    parser.add_argument(
+        "--subject-pass",
+        type=float,
+        default=40.0,
+        help="Minimum percentage required to pass each individual subject",
+    )
+    parser.add_argument(
+        "--aggregate-pass",
+        type=float,
+        default=40.0,
+        help="Minimum overall aggregate percentage required to pass",
+    )
+    parser.add_argument(
+        "--attendance-warning",
+        type=float,
+        default=75.0,
+        help="Attendance percentage threshold below which warnings are triggered",
+    )
+    parser.add_argument(
+        "--top",
+        type=int,
+        default=5,
+        help="Number of top-performing students to display",
+    )
+    parser.add_argument(
+        "--export", "-e",
+        default=None,
+        help="Optional path to save evaluated and formula-defused CSV report",
+    )
+
+    args = parser.parse_args()
+    sys.exit(run_cli(args))
+
+
+if __name__ == "__main__":
+    main()

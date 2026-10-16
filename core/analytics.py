@@ -294,8 +294,10 @@ def identify_academic_attention_cases(
             failed_subj_name = None
             other_percentages = []
             for subj, max_m in subject_configs.items():
+                if subj not in row:
+                    continue
                 s_score = float(row[subj])
-                s_pct = (s_score / max_m) * 100.0 if max_m > 0 else 0.0
+                s_pct = (s_score / max_m) * 100.0 if (max_m and max_m > 0) else 0.0
                 if s_pct < pass_percentage_threshold:
                     failed_subj_name = subj
                 else:

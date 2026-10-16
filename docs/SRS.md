@@ -37,17 +37,22 @@ EduMetrics V1 provides:
 ## 3. Functional Requirements (FR)
 
 ### FR-1: Data Ingestion & Schema Support
-- **FR-1.1:** The system shall ingest academic records from CSV format.
+- **FR-1.1:** The system shall ingest academic records from CSV format, supporting standard and multiline quoted fields.
 - **FR-1.2:** The system shall read student identifiers as strings, preserving leading zeros (e.g., `"0042"`).
 - **FR-1.3:** The system shall support flexible column mapping for Student ID, Name, Department (optional), Attendance %, and dynamic subject count ($N \ge 1$).
 - **FR-1.4:** The system shall detect and decode UTF-8, UTF-8-BOM, and Latin-1 character encodings.
+- **FR-1.5:** The system shall reject empty CSV files, empty/whitespace-only column headers, and duplicate headers (including duplicates after whitespace normalization).
+- **FR-1.6:** The system shall enforce consistent row lengths and reject malformed quoted records without silently discarding data.
 
 ### FR-2: Data Validation & Integrity
-- **FR-2.1:** The system shall verify the presence of all mapped mandatory columns.
-- **FR-2.2:** The system shall reject duplicate Student Identifiers within the same dataset.
-- **FR-2.3:** The system shall enforce score boundaries $0.0 \le \text{mark} \le \text{SubjectMaxMark}$.
-- **FR-2.4:** The system shall enforce attendance boundaries $0.0 \le \text{attendance} \le 100.0$.
-- **FR-2.5:** The system shall provide structured error messages citing specific row numbers and column names.
+- **FR-2.1:** The system shall verify the presence of all mapped mandatory columns (including mapped subject columns) before initiating row validation.
+- **FR-2.2:** The system shall enforce non-empty, unique Student Identifiers using case-insensitive collision detection while preserving original string casing.
+- **FR-2.3:** The system shall enforce non-empty Student Names, permitting legitimate international Unicode names, accents, hyphens, and apostrophes.
+- **FR-2.4:** The system shall enforce finite numerical score boundaries $0.0 \le \text{mark} \le \text{SubjectMaxMark}$ where $\text{SubjectMaxMark} > 0$.
+- **FR-2.5:** The system shall enforce finite numerical attendance boundaries $0.0 \le \text{attendance} \le 100.0$.
+- **FR-2.6:** The system shall strictly reject non-finite numerical representations (`NaN`, `Inf`, `-Inf`, `Infinity`) in marks, attendance, max marks, and grading thresholds.
+- **FR-2.7:** The system shall distinguish empty mark cells (flagged as missing score validation errors) from explicit institutional absence markers (`ABS`, `ABSENT`), which are evaluated as 0.0 marks and tracked separately in diagnostic audit fields (`absent_subjects`, `absent_subject_count`).
+- **FR-2.8:** The system shall provide structured error messages citing specific row numbers and column names.
 
 ### FR-3: Academic Normalization & Grading Engine
 - **FR-3.1:** The system shall compute total obtained marks and total possible marks.

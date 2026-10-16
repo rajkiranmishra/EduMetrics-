@@ -5,11 +5,14 @@ Guarantees:
 2. Character encoding resilience (UTF-8, UTF-8-BOM, Latin-1 fallback).
 3. Preservation of string formatting (e.g. leading zeros in student IDs).
 4. Whitespace trimming and header normalization.
-5. Duplicate column header detection.
-6. Enforces computational bounds via security checks.
+5. Detection of duplicate column headers (including duplicates after whitespace trimming).
+6. Detection of empty or whitespace-only column headers.
+7. Support for multiline quoted fields and rejection of malformed quoted fields or inconsistent row lengths.
+8. Enforces computational bounds via security checks.
 """
 
 import io
+import csv
 from typing import Tuple, List, Optional
 import pandas as pd
 
@@ -66,23 +69,62 @@ def load_csv_from_bytes(
     # 3. Detect encoding
     encoding = detect_encoding(file_bytes)
 
-    # 4. Check raw header line for duplicate column headers before pandas mangles them
+    # 4. Decode content and inspect structure via csv.reader
     try:
         sample_text = file_bytes.decode(encoding, errors="replace")
-        header_line = sample_text.splitlines()[0] if sample_text.splitlines() else ""
-        import csv
-        header_reader = csv.reader([header_line])
-        raw_headers = [c.strip() for c in next(header_reader, []) if c.strip()]
-        if len(raw_headers) != len(set(raw_headers)):
-            duplicates = [c for c in raw_headers if raw_headers.count(c) > 1]
-            raise IngestionError(
-                f"Dataset contains duplicate column headers: {list(set(duplicates))}. "
-                f"All column headers must be distinct."
-            )
+    except Exception as exc:
+        raise IngestionError(f"Failed to decode CSV '{filename}' using {encoding}: {str(exc)}") from exc
+
+    if not sample_text.strip():
+        raise IngestionError(f"File '{filename}' contains no readable content or is empty.")
+
+    try:
+        csv_reader = csv.reader(io.StringIO(sample_text))
+        first_row = next(csv_reader, None)
+    except csv.Error as exc:
+        raise IngestionError(f"Malformed CSV structure in '{filename}': {str(exc)}") from exc
+
+    if first_row is None or len(first_row) == 0 or all(not str(c).strip() for c in first_row):
+        raise IngestionError(f"Uploaded CSV file '{filename}' has no header row.")
+
+    # Check for empty headers (e.g. "student_id,name,,Math")
+    empty_header_positions = [i + 1 for i, c in enumerate(first_row) if not str(c).strip()]
+    if empty_header_positions:
+        raise IngestionError(
+            f"Dataset contains empty or whitespace-only column header at column position(s) {empty_header_positions}. "
+            f"All column headers must be non-empty strings."
+        )
+
+    # Check for duplicate headers after whitespace normalization
+    norm_headers = [str(c).strip() for c in first_row]
+    seen_headers = set()
+    dup_headers = []
+    for h in norm_headers:
+        if h in seen_headers and h not in dup_headers:
+            dup_headers.append(h)
+        seen_headers.add(h)
+
+    if dup_headers:
+        raise IngestionError(
+            f"Dataset contains duplicate column headers (after whitespace normalization): {dup_headers}. "
+            f"All column headers must be distinct."
+        )
+
+    # Validate row length consistency across all data rows
+    expected_cols = len(first_row)
+    try:
+        for row_idx, row in enumerate(csv_reader, start=2):
+            if not row or all(not str(c).strip() for c in row):
+                continue
+            if len(row) != expected_cols:
+                raise IngestionError(
+                    f"Inconsistent row length in '{filename}' at row {row_idx}: "
+                    f"expected {expected_cols} columns, found {len(row)}."
+                )
     except IngestionError:
         raise
-    except Exception as exc:
-        raise IngestionError(f"Failed to inspect headers in CSV '{filename}': {str(exc)}") from exc
+    except csv.Error as exc:
+        raise IngestionError(f"Malformed CSV data in '{filename}': {str(exc)}") from exc
 
     # 5. Parse CSV via Pandas
     try:
@@ -91,9 +133,12 @@ def load_csv_from_bytes(
             io.BytesIO(file_bytes),
             encoding=encoding,
             dtype=str,
+            index_col=False,
             skipinitialspace=True,
             on_bad_lines="error",
         )
+    except IngestionError:
+        raise
     except Exception as exc:
         raise IngestionError(f"Failed to parse CSV '{filename}': {str(exc)}") from exc
 

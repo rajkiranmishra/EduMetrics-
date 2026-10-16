@@ -16,7 +16,12 @@ from security.upload_checks import (
 )
 from core.loader import load_csv_from_bytes, IngestionError
 from core.validation import validate_dataset, ValidationResult
-from core.grading import GradingPolicy, GradeBoundary, evaluate_students
+from core.grading import (
+    GradingPolicy,
+    GradeBoundary,
+    PolicyConfigurationError,
+    evaluate_students,
+)
 from core.analytics import (
     compute_class_summary,
     compute_subject_analytics,
@@ -445,37 +450,40 @@ with tabs[1]:
                         st.markdown(f"- **{err}**")
                 else:
                     # 2. Build Policy & Evaluate
-                    policy = GradingPolicy(
-                        subject_pass_percentage=subj_pass_pct,
-                        aggregate_pass_percentage=agg_pass_pct,
-                        attendance_warning_threshold=att_warn_thresh,
-                    )
-                    df_evaluated = evaluate_students(
-                        df=raw_df,
-                        student_id_col=selected_id,
-                        name_col=selected_name,
-                        attendance_col=selected_att,
-                        subject_configs=subject_configs,
-                        policy=policy,
-                        department_col=selected_dept,
-                    )
+                    try:
+                        policy = GradingPolicy(
+                            subject_pass_percentage=subj_pass_pct,
+                            aggregate_pass_percentage=agg_pass_pct,
+                            attendance_warning_threshold=att_warn_thresh,
+                        )
+                        df_evaluated = evaluate_students(
+                            df=raw_df,
+                            student_id_col=selected_id,
+                            name_col=selected_name,
+                            attendance_col=selected_att,
+                            subject_configs=subject_configs,
+                            policy=policy,
+                            department_col=selected_dept,
+                        )
 
-                    # 3. Analytics
-                    summary = compute_class_summary(df_evaluated)
-                    subj_metrics = compute_subject_analytics(df_evaluated, subject_configs, policy.subject_pass_percentage)
-                    attention_cases = identify_academic_attention_cases(df_evaluated, subject_configs, policy.subject_pass_percentage)
+                        # 3. Analytics
+                        summary = compute_class_summary(df_evaluated)
+                        subj_metrics = compute_subject_analytics(df_evaluated, subject_configs, policy.subject_pass_percentage)
+                        attention_cases = identify_academic_attention_cases(df_evaluated, subject_configs, policy.subject_pass_percentage)
 
-                    # Store in session state
-                    st.session_state.evaluated_df = df_evaluated
-                    st.session_state.class_summary = summary
-                    st.session_state.subject_metrics = subj_metrics
-                    st.session_state.attention_students = attention_cases
-                    st.session_state.policy = policy
-                    st.session_state.subject_configs = subject_configs
-                    st.session_state.analysis_config = current_config
-                    st.session_state.config_stale = False
+                        # Store in session state
+                        st.session_state.evaluated_df = df_evaluated
+                        st.session_state.class_summary = summary
+                        st.session_state.subject_metrics = subj_metrics
+                        st.session_state.attention_students = attention_cases
+                        st.session_state.policy = policy
+                        st.session_state.subject_configs = subject_configs
+                        st.session_state.analysis_config = current_config
+                        st.session_state.config_stale = False
 
-                    st.success("✅ Analysis successfully computed! View the results across the tabs above.")
+                        st.success("✅ Analysis successfully computed! View the results across the tabs above.")
+                    except PolicyConfigurationError as p_err:
+                        st.error(f"⚠️ Policy Configuration Error: {p_err}")
 
 
 # -----------------------------------------------------------------------------

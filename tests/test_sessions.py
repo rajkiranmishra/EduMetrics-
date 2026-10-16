@@ -717,3 +717,23 @@ def test_widget_state_isolation_across_dataset_swaps():
     reloaded_school_subjs = at.multiselect[0].value
     assert "English" in reloaded_school_subjs
     assert "Database_Lab" not in reloaded_school_subjs
+
+
+def test_streamlit_validation_error_display_on_non_finite_marks():
+    """Verify that uploading a dataset with non-finite marks shows validation errors in UI without crashing."""
+    content = b"student_id,student_name,attendance,Math\nS01,Alice,90.0,inf\n"
+    file_obj = _make_mock_file("infinite_marks.csv", content)
+
+    with patch("streamlit.file_uploader", return_value=file_obj):
+        at = AppTest.from_file("app.py")
+        at.run()
+
+        # Click Run Academic Analysis
+        run_btn = [b for b in at.button if "Run Academic Analysis" in b.label][0]
+        run_btn.click().run()
+
+        assert not at.exception
+        assert at.session_state["evaluated_df"] is None
+        # Check error was rendered
+        assert any("Validation Failed" in err.value for err in at.error)
+

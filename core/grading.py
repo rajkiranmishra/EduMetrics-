@@ -3,14 +3,16 @@
 Implements:
 1. Heterogeneous subject weight normalization:
    Percentage = (Total Marks Obtained / Total Maximum Possible Marks) * 100
-2. Configurable grade boundaries with monotonicity validation.
+2. Configurable grade boundaries with monotonicity and finiteness validation.
 3. Independent subject-level and aggregate-level pass/fail evaluation.
 4. Attendance shortage threshold flagging.
-5. Actionable failure diagnostics.
+5. Actionable failure diagnostics distinguishing explicit absence from low scores.
+6. Exact grade boundary and passing threshold preservation without floating point artifacts.
 """
 
+import math
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Set
 import pandas as pd
 import numpy as np
 
@@ -27,6 +29,11 @@ class GradeBoundary:
     min_percentage: float
 
     def __post_init__(self):
+        if not isinstance(self.min_percentage, (int, float)) or not math.isfinite(self.min_percentage):
+            raise PolicyConfigurationError(
+                f"Grade boundary percentage for '{self.label}' must be a finite number, "
+                f"got {self.min_percentage}."
+            )
         if not (0.0 <= self.min_percentage <= 100.0):
             raise PolicyConfigurationError(
                 f"Grade boundary percentage for '{self.label}' must be in [0.0, 100.0], "
@@ -51,19 +58,20 @@ class GradingPolicy:
     attendance_warning_threshold: float = 75.0  # Attendance % below which a warning is issued
 
     def validate(self) -> None:
-        """Validate that grade boundaries and pass thresholds are sound."""
-        if not (0.0 <= self.subject_pass_percentage <= 100.0):
-            raise PolicyConfigurationError(
-                f"Subject pass percentage must be in [0.0, 100.0], got {self.subject_pass_percentage}."
-            )
-        if not (0.0 <= self.aggregate_pass_percentage <= 100.0):
-            raise PolicyConfigurationError(
-                f"Aggregate pass percentage must be in [0.0, 100.0], got {self.aggregate_pass_percentage}."
-            )
-        if not (0.0 <= self.attendance_warning_threshold <= 100.0):
-            raise PolicyConfigurationError(
-                f"Attendance warning threshold must be in [0.0, 100.0], got {self.attendance_warning_threshold}."
-            )
+        """Validate that grade boundaries and pass thresholds are sound and finite."""
+        for threshold_val, threshold_name in [
+            (self.subject_pass_percentage, "Subject pass percentage"),
+            (self.aggregate_pass_percentage, "Aggregate pass percentage"),
+            (self.attendance_warning_threshold, "Attendance warning threshold"),
+        ]:
+            if not isinstance(threshold_val, (int, float)) or not math.isfinite(threshold_val):
+                raise PolicyConfigurationError(
+                    f"{threshold_name} must be a finite number, got {threshold_val}."
+                )
+            if not (0.0 <= float(threshold_val) <= 100.0):
+                raise PolicyConfigurationError(
+                    f"{threshold_name} must be in [0.0, 100.0], got {threshold_val}."
+                )
 
         if not self.grade_boundaries:
             raise PolicyConfigurationError("Grade boundaries list cannot be empty.")
@@ -88,6 +96,9 @@ class GradingPolicy:
 
 def assign_grade_to_percentage(percentage: float, boundaries: List[GradeBoundary]) -> str:
     """Map a percentage score to a letter grade based on ordered boundaries."""
+    if not isinstance(percentage, (int, float)) or not math.isfinite(percentage):
+        raise ValueError(f"Percentage must be a finite number, got {percentage}.")
+
     # Defensively clamp percentage for grading lookup
     clamped_pct = max(0.0, min(100.0, float(percentage)))
     for boundary in boundaries:
@@ -111,57 +122,110 @@ def evaluate_students(
         New DataFrame with standardized student performance columns.
     """
     policy.validate()
+
+    # Verify structural columns exist in DataFrame
+    required_cols = [
+        (student_id_col, "Student ID"),
+        (name_col, "Student Name"),
+        (attendance_col, "Attendance"),
+    ]
+    for col_name, col_role in required_cols:
+        if col_name not in df.columns:
+            raise PolicyConfigurationError(f"{col_role} column '{col_name}' not found in DataFrame.")
+
+    if not subject_configs:
+        raise PolicyConfigurationError("At least one subject must be configured for evaluation.")
+
+    for subj, max_m in subject_configs.items():
+        if subj not in df.columns:
+            raise PolicyConfigurationError(f"Subject column '{subj}' not found in DataFrame.")
+        if not isinstance(max_m, (int, float)) or not math.isfinite(max_m) or max_m <= 0:
+            raise PolicyConfigurationError(
+                f"Maximum mark for subject '{subj}' must be a finite number > 0, got {max_m}."
+            )
+
     total_possible_marks = sum(subject_configs.values())
-    if total_possible_marks <= 0:
-        raise PolicyConfigurationError("Total possible marks across all subjects must be > 0.")
+    if not math.isfinite(total_possible_marks) or total_possible_marks <= 0:
+        raise PolicyConfigurationError("Total possible marks across all subjects must be a finite number > 0.")
+
+    if df.empty:
+        return pd.DataFrame(columns=[
+            "student_id", "student_name", "department", "attendance",
+            *subject_configs.keys(),
+            "total_marks", "max_marks", "average_marks", "percentage",
+            "grade", "status", "failed_subject_count", "absent_subject_count",
+            "absent_subjects", "failure_reason", "attendance_warning",
+        ])
 
     evaluated_records = []
 
     for _, row in df.iterrows():
         sid = str(row[student_id_col]).strip()
         sname = str(row[name_col]).strip()
-        dept = str(row[department_col]).strip() if (department_col and department_col in df.columns) else "General"
-        
+        dept = (
+            str(row[department_col]).strip()
+            if (department_col and department_col in df.columns and str(row[department_col]).strip().lower() not in ("", "nan", "none", "null"))
+            else "General"
+        )
+
         # Clean attendance
         att_raw = str(row[attendance_col]).strip().rstrip("%")
-        att_val = float(att_raw) if att_raw else 0.0
+        try:
+            att_num = float(att_raw) if att_raw else 0.0
+            att_val = att_num if math.isfinite(att_num) else 0.0
+        except (ValueError, TypeError):
+            att_val = 0.0
 
         # Calculate subject scores and pass/fail
         subj_obtained = {}
         failed_subjects = []
+        absent_subjects = []
         total_obtained = 0.0
 
         for subj, max_m in subject_configs.items():
             val_str = str(row[subj]).strip()
-            # If student was absent, score is 0.0
-            if val_str.upper() in ("ABS", "ABSENT", "A") or not val_str:
+            is_absent = val_str.upper() in ("ABS", "ABSENT")
+
+            if is_absent:
                 score = 0.0
+                absent_subjects.append(subj)
             else:
-                score = float(val_str)
+                try:
+                    s_num = float(val_str)
+                    score = s_num if math.isfinite(s_num) else 0.0
+                except (ValueError, TypeError):
+                    score = 0.0
 
             subj_obtained[subj] = score
             total_obtained += score
 
-            # Check individual subject pass threshold
-            subj_pct = (score / max_m) * 100.0 if max_m > 0 else 0.0
+            # Check individual subject pass threshold (defend against floating-point epsilon)
+            subj_pct = round((score / max_m) * 100.0, 4) if max_m > 0 else 0.0
             if subj_pct < policy.subject_pass_percentage:
-                failed_subjects.append(f"{subj} ({score:.1f}/{max_m:.0f})")
+                if is_absent:
+                    failed_subjects.append(f"{subj} (ABSENT/{max_m:.0f})")
+                else:
+                    failed_subjects.append(f"{subj} ({score:.1f}/{max_m:.0f})")
 
         # Proportional percentage calculation
-        percentage = (total_obtained / total_possible_marks) * 100.0
-        average_mark = total_obtained / len(subject_configs)
+        raw_percentage = (total_obtained / total_possible_marks) * 100.0
+        # Prevent floating-point epsilon artifacts from unfairly failing an exact pass threshold
+        percentage = round(raw_percentage, 2)
+        average_mark = round(total_obtained / len(subject_configs), 2)
 
         # Grade assignment
         grade = assign_grade_to_percentage(percentage, policy.grade_boundaries)
 
-        # Pass / Fail evaluation
-        agg_pass = percentage >= policy.aggregate_pass_percentage
+        # Pass / Fail evaluation (exact thresholds honored)
+        agg_pass = (percentage >= policy.aggregate_pass_percentage) or (raw_percentage >= policy.aggregate_pass_percentage)
         subj_pass = len(failed_subjects) == 0
 
         is_passed = agg_pass and subj_pass
         status = "PASS" if is_passed else "FAIL"
 
         reasons = []
+        if absent_subjects:
+            reasons.append(f"Absent in: {', '.join(absent_subjects)}")
         if not subj_pass:
             reasons.append(f"Failed in: {', '.join(failed_subjects)}")
         if not agg_pass:
@@ -180,11 +244,13 @@ def evaluate_students(
             **subj_obtained,
             "total_marks": round(total_obtained, 2),
             "max_marks": round(total_possible_marks, 2),
-            "average_marks": round(average_mark, 2),
-            "percentage": round(percentage, 2),
+            "average_marks": average_mark,
+            "percentage": percentage,
             "grade": grade,
             "status": status,
             "failed_subject_count": len(failed_subjects),
+            "absent_subject_count": len(absent_subjects),
+            "absent_subjects": ", ".join(absent_subjects) if absent_subjects else "None",
             "failure_reason": failure_reason,
             "attendance_warning": att_warning,
         }

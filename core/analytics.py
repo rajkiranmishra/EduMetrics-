@@ -10,7 +10,7 @@ Implements:
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Union
 import pandas as pd
 import numpy as np
 
@@ -54,6 +54,7 @@ class SubjectMetric:
     pass_percentage: float
     average_percentage: float
     difficulty_rank: int = 1
+    pass_threshold: float = 40.0
 
 
 @dataclass
@@ -143,7 +144,7 @@ def compute_class_summary(df_evaluated: pd.DataFrame) -> ClassSummary:
 def compute_subject_analytics(
     df_evaluated: pd.DataFrame,
     subject_configs: Dict[str, float],
-    pass_percentage_threshold: float = 40.0,
+    pass_percentage_threshold: Union[float, Dict[str, float]] = 40.0,
 ) -> List[SubjectMetric]:
     """Compute performance distributions and difficulty rankings for all subjects."""
     metrics: List[SubjectMetric] = []
@@ -161,7 +162,11 @@ def compute_subject_analytics(
         high_s = round(float(np.max(scores)), 2)
         low_s = round(float(np.min(scores)), 2)
 
-        pass_mark = (pass_percentage_threshold / 100.0) * max_m
+        if isinstance(pass_percentage_threshold, dict):
+            s_thresh = float(pass_percentage_threshold.get(subj, 40.0))
+        else:
+            s_thresh = float(pass_percentage_threshold)
+        pass_mark = (s_thresh / 100.0) * max_m
         pass_cnt = int(sum(is_greater_or_close(float(s), pass_mark) for s in scores))
         fail_cnt = n - pass_cnt
         pass_pct = round((pass_cnt / n) * 100.0, 2)
@@ -179,6 +184,7 @@ def compute_subject_analytics(
             fail_count=fail_cnt,
             pass_percentage=pass_pct,
             average_percentage=avg_pct,
+            pass_threshold=s_thresh,
         ))
 
     # Rank difficulty: lower pass percentage = higher difficulty (Rank 1 = hardest)
@@ -248,7 +254,7 @@ def get_top_performers(df_evaluated: pd.DataFrame, n: int = 5) -> pd.DataFrame:
 def identify_academic_attention_cases(
     df_evaluated: pd.DataFrame,
     subject_configs: Dict[str, float],
-    pass_percentage_threshold: float = 40.0,
+    pass_percentage_threshold: Union[float, Dict[str, float]] = 40.0,
 ) -> List[AcademicAttentionStudent]:
     """Identify students requiring targeted academic support via transparent rules.
 
@@ -307,7 +313,11 @@ def identify_academic_attention_cases(
                     continue
                 s_score = float(row[subj])
                 s_pct = (s_score / max_m) * 100.0 if (max_m and max_m > 0) else 0.0
-                if not is_greater_or_close(s_pct, pass_percentage_threshold):
+                if isinstance(pass_percentage_threshold, dict):
+                    s_thresh = float(pass_percentage_threshold.get(subj, 40.0))
+                else:
+                    s_thresh = float(pass_percentage_threshold)
+                if not is_greater_or_close(s_pct, s_thresh):
                     failed_subj_name = subj
                 else:
                     other_percentages.append(s_pct)

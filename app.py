@@ -19,6 +19,9 @@ from core.validation import validate_dataset, ValidationResult
 from core.grading import (
     GradingPolicy,
     GradeBoundary,
+    InstitutionMetadata,
+    GRADING_PRESETS,
+    parse_grade_boundaries_string,
     PolicyConfigurationError,
     evaluate_students,
 )
@@ -287,8 +290,56 @@ with tabs[1]:
     if st.session_state.raw_df is not None:
         raw_df = st.session_state.raw_df
         available_cols = list(raw_df.columns)
+        fp = st.session_state.dataset_fingerprint or "default"
 
-        st.subheader("1. Column Mapping")
+        # ---------------------------------------------------------------------
+        # 1. INSTITUTION DETAILS
+        # ---------------------------------------------------------------------
+        st.subheader("1. Institution Details")
+        st.caption("Configure optional institutional metadata to contextualize academic performance reports.")
+        with st.expander("🏫 Institution Metadata (Optional)", expanded=False):
+            inst_col1, inst_col2 = st.columns(2)
+            with inst_col1:
+                inst_name = st.text_input(
+                    "Institution Name",
+                    value=st.session_state.institution_metadata.institution_name,
+                    key=f"inst_name_{fp}",
+                    help="Name of school, college, or university (e.g. Greenwood High School).",
+                )
+                level_options = ["School", "College", "University", "Other"]
+                curr_level = st.session_state.institution_metadata.academic_level or "School"
+                curr_lvl_idx = level_options.index(curr_level) if curr_level in level_options else 0
+                inst_level = st.selectbox(
+                    "Academic Level",
+                    options=level_options,
+                    index=curr_lvl_idx,
+                    key=f"inst_level_{fp}",
+                    help="Classification of the educational institution.",
+                )
+            with inst_col2:
+                inst_program = st.text_input(
+                    "Class / Course / Program Name",
+                    value=st.session_state.institution_metadata.program_name,
+                    key=f"inst_prog_{fp}",
+                    help="e.g. Class 10-A, B.Tech Computer Science, Year 2.",
+                )
+                inst_term = st.text_input(
+                    "Academic Term / Semester",
+                    value=st.session_state.institution_metadata.academic_term,
+                    key=f"inst_term_{fp}",
+                    help="e.g. Term 1, Semester IV, Fall 2026.",
+                )
+            current_inst_meta = InstitutionMetadata(
+                institution_name=inst_name,
+                academic_level=inst_level,
+                program_name=inst_program,
+                academic_term=inst_term,
+            )
+
+        # ---------------------------------------------------------------------
+        # 2. COLUMN MAPPING
+        # ---------------------------------------------------------------------
+        st.subheader("2. Column Mapping")
         st.caption("Map the columns in your CSV to standard academic fields.")
 
         # Heuristic auto-selection of columns
@@ -306,7 +357,8 @@ with tabs[1]:
                 "Student ID *",
                 available_cols,
                 index=id_idx,
-                key=f"col_id_{st.session_state.dataset_fingerprint}",
+                key=f"col_id_{fp}",
+                help="Unique student identification number or registration roll.",
             )
         with cm2:
             name_idx = find_default(["student_name", "name", "full_name"], available_cols)
@@ -314,7 +366,8 @@ with tabs[1]:
                 "Student Name *",
                 available_cols,
                 index=name_idx,
-                key=f"col_name_{st.session_state.dataset_fingerprint}",
+                key=f"col_name_{fp}",
+                help="Official student full name.",
             )
         with cm3:
             att_idx = find_default(["attendance", "attendance_pct", "att"], available_cols)
@@ -322,7 +375,8 @@ with tabs[1]:
                 "Attendance (%) *",
                 available_cols,
                 index=att_idx,
-                key=f"col_att_{st.session_state.dataset_fingerprint}",
+                key=f"col_att_{fp}",
+                help="Attendance percentage value between 0.0% and 100.0%.",
             )
         with cm4:
             dept_opts = ["None"] + available_cols
@@ -331,12 +385,17 @@ with tabs[1]:
                 "Department / Section",
                 dept_opts,
                 index=dept_idx,
-                key=f"col_dept_{st.session_state.dataset_fingerprint}",
+                key=f"col_dept_{fp}",
+                help="Optional cohort grouping (e.g. Section A, CSE, Grade 10).",
             )
             selected_dept = None if selected_dept_opt == "None" else selected_dept_opt
 
-        # Subject columns selection
-        st.subheader("2. Subject Marks & Maximum Possible Scores")
+        # ---------------------------------------------------------------------
+        # 3. SUBJECT CONFIGURATION
+        # ---------------------------------------------------------------------
+        st.subheader("3. Subject Configuration")
+        st.caption("Select academic courses, specify maximum possible marks, and configure subject pass thresholds.")
+
         excluded_from_subjects = [selected_id, selected_name, selected_att]
         if selected_dept:
             excluded_from_subjects.append(selected_dept)
@@ -346,18 +405,22 @@ with tabs[1]:
             "Select Subject Columns for Analysis *",
             options=candidate_subjects,
             default=candidate_subjects,
-            key=f"sel_subjs_{st.session_state.dataset_fingerprint}",
+            key=f"sel_subjs_{fp}",
             help="Select all columns that represent academic course marks.",
         )
 
-        # Subject Maximum Marks
-        subject_configs = {}
+        subject_configs: Dict[str, float] = {}
+        subject_pass_overrides: Dict[str, float] = {}
         if selected_subjects:
-            st.write("Specify Maximum Possible Marks for each subject:")
+            st.write("**Subject Maximum Marks & Passing Cutoffs:**")
+            enable_overrides = st.checkbox(
+                "Configure subject-specific passing thresholds (optional)",
+                key=f"enable_subj_overrides_{fp}",
+                help="Check this if different courses have distinct passing percentage cutoffs (e.g. 50% for practical vs 40% for theory).",
+            )
             sub_cols = st.columns(min(len(selected_subjects), 4))
             for i, subj in enumerate(selected_subjects):
                 col_target = sub_cols[i % len(sub_cols)]
-                # Heuristic: 50 if lab/project in name, else 100
                 default_max = 50.0 if any(k in subj.lower() for k in ["lab", "project", "practical"]) else 100.0
                 max_val = col_target.number_input(
                     f"{subj} Max",
@@ -365,13 +428,28 @@ with tabs[1]:
                     max_value=500.0,
                     value=default_max,
                     step=5.0,
-                    key=f"max_m_{subj}_{st.session_state.dataset_fingerprint}",
+                    key=f"max_m_{subj}_{fp}",
+                    help=f"Maximum possible score achievable in {subj}.",
                 )
                 subject_configs[subj] = float(max_val)
+                if enable_overrides:
+                    pass_val = col_target.number_input(
+                        f"{subj} Pass Cut (%)",
+                        min_value=0.0,
+                        max_value=100.0,
+                        value=40.0,
+                        step=1.0,
+                        key=f"pass_m_{subj}_{fp}",
+                        help=f"Minimum percentage required to pass {subj}.",
+                    )
+                    subject_pass_overrides[subj] = float(pass_val)
 
-        # Grading Policy Settings
-        st.subheader("3. Institutional Policy Configuration")
-        pol1, pol2, pol3 = st.columns(3)
+        # ---------------------------------------------------------------------
+        # 4. GRADING POLICY
+        # ---------------------------------------------------------------------
+        st.subheader("4. Grading Policy")
+        st.caption("Configure passing criteria, grading scale presets, and customizable grade brackets.")
+        pol1, pol2 = st.columns(2)
         with pol1:
             subj_pass_pct = st.number_input(
                 "Subject Passing Threshold (%)",
@@ -379,8 +457,8 @@ with tabs[1]:
                 max_value=100.0,
                 value=40.0,
                 step=1.0,
-                key=f"pol_subj_{st.session_state.dataset_fingerprint}",
-                help="Minimum percentage required in each individual subject.",
+                key=f"pol_subj_{fp}",
+                help="Minimum percentage required in each individual subject unless overridden.",
             )
         with pol2:
             agg_pass_pct = st.number_input(
@@ -389,21 +467,167 @@ with tabs[1]:
                 max_value=100.0,
                 value=40.0,
                 step=1.0,
-                key=f"pol_agg_{st.session_state.dataset_fingerprint}",
-                help="Minimum normalized aggregate percentage required overall.",
+                key=f"pol_agg_{fp}",
+                help="Minimum overall normalized aggregate percentage required to pass.",
             )
-        with pol3:
+
+        # Sample Presets Selector
+        st.write("**Grading Scale Presets:**")
+        st.caption("Select a sample preset (illustrative reference, not official institutional regulations):")
+        pre_col1, pre_col2 = st.columns([3, 1])
+        with pre_col1:
+            preset_choice = st.selectbox(
+                "Select Sample Preset",
+                options=["Default EduMetrics", "Example School", "Example College"],
+                key=f"preset_sel_{fp}",
+                label_visibility="collapsed",
+            )
+        with pre_col2:
+            if st.button("Apply Preset", key=f"btn_apply_preset_{fp}"):
+                st.session_state.custom_boundaries = [
+                    GradeBoundary(b.label, b.min_percentage) for b in GRADING_PRESETS[preset_choice]
+                ]
+                st.session_state.gb_version = st.session_state.get("gb_version", 0) + 1
+                clear_analysis_results()
+                st.session_state.config_stale = True
+                st.rerun()
+
+        # Custom Grade Boundaries Editor
+        st.write("**Grade Boundaries:**")
+        st.caption("Customize letter grade labels and minimum percentage thresholds (unrounded percentage evaluation).")
+        gb_ver = st.session_state.get("gb_version", 0)
+        active_bounds = st.session_state.get("custom_boundaries", GRADING_PRESETS["Default EduMetrics"])
+
+        edited_boundaries: List[GradeBoundary] = []
+        for i, b in enumerate(active_bounds):
+            g1, g2, g3 = st.columns([2, 3, 3])
+            with g1:
+                lbl = st.text_input(
+                    f"Grade {i+1} Label",
+                    value=b.label,
+                    key=f"gb_label_{i}_{fp}_{gb_ver}",
+                )
+            with g2:
+                is_lowest = (i == len(active_bounds) - 1)
+                min_val = st.number_input(
+                    f"Min % for {lbl or f'Tier {i+1}'}",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=0.0 if is_lowest else float(b.min_percentage),
+                    step=1.0,
+                    disabled=is_lowest,
+                    key=f"gb_min_{i}_{fp}_{gb_ver}",
+                    help="Lowest grade boundary must begin at 0%." if is_lowest else "Minimum score percentage required for this grade.",
+                )
+            with g3:
+                if i == 0:
+                    st.caption(f"Score Range: ≥ {min_val:.1f}% to 100.0%")
+                elif is_lowest:
+                    st.caption("Score Range: 0.0% to < preceding tier")
+                else:
+                    st.caption(f"Score Range: ≥ {min_val:.1f}% to < preceding tier")
+            edited_boundaries.append(GradeBoundary(label=lbl, min_percentage=0.0 if is_lowest else min_val))
+
+        btn1, btn2, _ = st.columns([1, 1, 2])
+        with btn1:
+            if st.button("➕ Add Grade Level", key=f"btn_add_tier_{fp}"):
+                if len(active_bounds) < 12:
+                    last = active_bounds[-1]
+                    prev_pct = active_bounds[-2].min_percentage if len(active_bounds) >= 2 else 50.0
+                    new_pct = max(10.0, prev_pct - 10.0)
+                    st.session_state.custom_boundaries = list(active_bounds[:-1]) + [GradeBoundary(f"G{len(active_bounds)}", new_pct), last]
+                    st.session_state.gb_version = gb_ver + 1
+                    clear_analysis_results()
+                    st.session_state.config_stale = True
+                    st.rerun()
+                else:
+                    st.warning("Maximum of 12 grade levels reached.")
+        with btn2:
+            if st.button("➖ Remove Grade Level", key=f"btn_rem_tier_{fp}"):
+                if len(active_bounds) > 2:
+                    st.session_state.custom_boundaries = list(active_bounds[:-2]) + [active_bounds[-1]]
+                    st.session_state.gb_version = gb_ver + 1
+                    clear_analysis_results()
+                    st.session_state.config_stale = True
+                    st.rerun()
+                else:
+                    st.warning("Minimum of 2 grade levels required.")
+
+        # Real-time policy validation feedback
+        policy_error = None
+        try:
+            test_policy = GradingPolicy(
+                subject_pass_percentage=subj_pass_pct,
+                aggregate_pass_percentage=agg_pass_pct,
+                grade_boundaries=edited_boundaries,
+                subject_pass_overrides=subject_pass_overrides,
+            )
+            test_policy.validate()
+        except (PolicyConfigurationError, ValueError) as p_val_err:
+            policy_error = str(p_val_err)
+            st.error(f"⚠️ Policy Validation Warning: {policy_error}")
+
+        # ---------------------------------------------------------------------
+        # 5. ATTENDANCE POLICY
+        # ---------------------------------------------------------------------
+        st.subheader("5. Attendance Policy")
+        st.caption("Configure attendance shortage alert threshold and academic evaluation isolation.")
+        att1, att2 = st.columns(2)
+        with att1:
             att_warn_thresh = st.number_input(
                 "Attendance Warning Cutoff (%)",
                 min_value=0.0,
                 max_value=100.0,
                 value=75.0,
                 step=1.0,
-                key=f"pol_att_{st.session_state.dataset_fingerprint}",
+                key=f"pol_att_{fp}",
                 help="Attendance percentage below which students receive an attendance warning.",
             )
+        with att2:
+            st.write("")
+            st.write("")
+            enable_att_warn = st.checkbox(
+                "Enable Attendance Shortage Warning Indicator",
+                value=True,
+                key=f"pol_att_enable_{fp}",
+                help="When enabled, flags students below the attendance cutoff. Attendance warnings do not cause academic course failure.",
+            )
+        st.caption("ℹ️ **Academic Distinction:** Attendance is monitored as a pastoral and regulatory indicator. Low attendance triggers an advisory warning but does not automatically fail students.")
 
-        # Build current effective configuration and verify staleness
+        # ---------------------------------------------------------------------
+        # 6. POLICY PREVIEW
+        # ---------------------------------------------------------------------
+        st.subheader("6. Policy Preview")
+        st.caption("Review active institutional settings, passing criteria, and grade scale before analysis.")
+        with st.expander("👁️ View Active Policy Snapshot", expanded=True):
+            if not current_inst_meta.is_empty():
+                st.markdown(f"**Institution:** {current_inst_meta.institution_name or 'N/A'} | **Level:** {current_inst_meta.academic_level} | **Program:** {current_inst_meta.program_name or 'N/A'} | **Term:** {current_inst_meta.academic_term or 'N/A'}")
+            p_prev1, p_prev2 = st.columns(2)
+            with p_prev1:
+                st.write("**Passing Criteria:**")
+                st.write(f"- Subject Pass Threshold: **{subj_pass_pct:.1f}%**")
+                if subject_pass_overrides:
+                    for s, o_val in sorted(subject_pass_overrides.items()):
+                        st.write(f"  - *{s} Override:* **{o_val:.1f}%**")
+                st.write(f"- Aggregate Pass Threshold: **{agg_pass_pct:.1f}%**")
+                st.write(f"- Attendance Alert: **{'< ' + str(att_warn_thresh) + '%' if enable_att_warn else 'Disabled'}**")
+            with p_prev2:
+                st.write("**Active Grade Scale:**")
+                scale_items = []
+                for idx, b in enumerate(edited_boundaries):
+                    if idx == 0:
+                        rng = f"≥ {b.min_percentage:.0f}% to 100%"
+                    else:
+                        prev_b = edited_boundaries[idx - 1]
+                        rng = f"≥ {b.min_percentage:.0f}% to < {prev_b.min_percentage:.0f}%"
+                    scale_items.append({"Grade": b.label, "Minimum %": f"{b.min_percentage:.1f}%", "Score Range": rng})
+                st.dataframe(pd.DataFrame(scale_items), hide_index=True, use_container_width=True)
+
+        # ---------------------------------------------------------------------
+        # 7. RUN ANALYSIS
+        # ---------------------------------------------------------------------
+        st.subheader("7. Run Analysis")
+
         current_config = create_analysis_config(
             dataset_fingerprint=st.session_state.dataset_fingerprint or "",
             student_id_col=selected_id,
@@ -415,6 +639,10 @@ with tabs[1]:
             subject_pass_percentage=subj_pass_pct,
             aggregate_pass_percentage=agg_pass_pct,
             attendance_warning_threshold=att_warn_thresh,
+            grade_boundaries=edited_boundaries,
+            subject_pass_overrides=subject_pass_overrides,
+            enable_attendance_warning=enable_att_warn,
+            institution_metadata=current_inst_meta,
         )
 
         if is_analysis_stale(current_config, st.session_state.analysis_config):
@@ -428,13 +656,13 @@ with tabs[1]:
                 "Please click **'🚀 Run Academic Analysis'** below to generate updated results."
             )
 
-        # Run Analysis Button
-        st.markdown("---")
         if st.button("🚀 Run Academic Analysis", type="primary", use_container_width=True):
             if not selected_subjects:
                 st.error("Please select at least one subject column.")
+            elif policy_error:
+                st.error(f"Cannot run analysis with invalid grading policy: {policy_error}")
             else:
-                # 1. Validate
+                # 1. Validate dataset
                 val_result = validate_dataset(
                     df=raw_df,
                     student_id_col=selected_id,
@@ -455,7 +683,11 @@ with tabs[1]:
                             subject_pass_percentage=subj_pass_pct,
                             aggregate_pass_percentage=agg_pass_pct,
                             attendance_warning_threshold=att_warn_thresh,
+                            grade_boundaries=edited_boundaries,
+                            subject_pass_overrides=subject_pass_overrides,
+                            enable_attendance_warning=enable_att_warn,
                         )
+                        policy.validate()
                         df_evaluated = evaluate_students(
                             df=raw_df,
                             student_id_col=selected_id,
@@ -467,9 +699,10 @@ with tabs[1]:
                         )
 
                         # 3. Analytics
+                        pass_thresh_param = policy.subject_pass_overrides if policy.subject_pass_overrides else policy.subject_pass_percentage
                         summary = compute_class_summary(df_evaluated)
-                        subj_metrics = compute_subject_analytics(df_evaluated, subject_configs, policy.subject_pass_percentage)
-                        attention_cases = identify_academic_attention_cases(df_evaluated, subject_configs, policy.subject_pass_percentage)
+                        subj_metrics = compute_subject_analytics(df_evaluated, subject_configs, pass_thresh_param)
+                        attention_cases = identify_academic_attention_cases(df_evaluated, subject_configs, pass_thresh_param)
 
                         # Store in session state
                         st.session_state.evaluated_df = df_evaluated
@@ -477,6 +710,7 @@ with tabs[1]:
                         st.session_state.subject_metrics = subj_metrics
                         st.session_state.attention_students = attention_cases
                         st.session_state.policy = policy
+                        st.session_state.institution_metadata = current_inst_meta
                         st.session_state.subject_configs = subject_configs
                         st.session_state.analysis_config = current_config
                         st.session_state.config_stale = False
@@ -498,7 +732,8 @@ with tabs[2]:
         summary = st.session_state.class_summary
         df_eval = st.session_state.evaluated_df
 
-        st.header(f"Academic Performance Dashboard — {st.session_state.dataset_name}")
+        inst_title = f"{st.session_state.institution_metadata.institution_name} — " if (st.session_state.institution_metadata and st.session_state.institution_metadata.institution_name) else ""
+        st.header(f"Academic Performance Dashboard — {inst_title}{st.session_state.dataset_name}")
 
         # Top Metric Cards
         m1, m2, m3, m4, m5 = st.columns(5)
@@ -516,8 +751,8 @@ with tabs[2]:
         with c_left:
             st.subheader("📊 Letter Grade Distribution")
             if summary.grade_distribution:
-                # Order grades properly
-                grade_order = ["A+", "A", "B+", "B", "C", "D", "F"]
+                # Order grades according to active grading policy
+                grade_order = [b.label for b in st.session_state.policy.grade_boundaries]
                 ordered_counts = {g: summary.grade_distribution.get(g, 0) for g in grade_order}
                 st.bar_chart(ordered_counts)
             else:
@@ -692,6 +927,7 @@ with tabs[6]:
                 attention_students=attention,
                 policy=policy,
                 dataset_name=st.session_state.dataset_name,
+                institution_metadata=st.session_state.institution_metadata,
             )
             st.download_button(
                 label="⬇️ Download Summary Text Report",

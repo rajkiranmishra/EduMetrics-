@@ -32,6 +32,42 @@ MACHINE_EPSILON_TOLERANCE: float = 1e-12
 SUPPORTED_ABSENCE_CODES: Set[str] = {"ABS", "ABSENT"}
 
 
+@dataclass
+class InstitutionMetadata:
+    """Metadata representing the academic institution, level, program, and term."""
+    institution_name: str = ""
+    academic_level: str = "School"  # "School" | "College" | "University" | "Other"
+    program_name: str = ""
+    academic_term: str = ""
+    term: Optional[str] = None
+
+    def __post_init__(self):
+        if self.term and not self.academic_term:
+            self.academic_term = self.term
+        elif self.academic_term and not self.term:
+            self.term = self.academic_term
+
+    def is_empty(self) -> bool:
+        """Check if all descriptive institutional fields are unpopulated."""
+        t = (self.term or self.academic_term or "").strip()
+        return not any([
+            (self.institution_name or "").strip(),
+            (self.program_name or "").strip(),
+            t,
+        ]) and self.academic_level in ("Other", "School", "")
+
+    def to_dict(self) -> Dict[str, str]:
+        """Convert metadata to dictionary representation."""
+        t = (self.term or self.academic_term or "").strip()
+        return {
+            "institution_name": (self.institution_name or "").strip(),
+            "academic_level": (self.academic_level or "").strip(),
+            "program_name": (self.program_name or "").strip(),
+            "academic_term": t,
+            "term": t,
+        }
+
+
 def is_greater_or_close(val: float, threshold: float, tol: float = MACHINE_EPSILON_TOLERANCE) -> bool:
     """Evaluate whether val >= threshold using full numerical precision with float artifact protection.
 
@@ -55,6 +91,9 @@ class GradeBoundary:
     min_percentage: float
 
     def __post_init__(self):
+        clean_label = str(self.label).strip()
+        if not clean_label:
+            raise PolicyConfigurationError("Grade boundary label cannot be empty.")
         if not isinstance(self.min_percentage, (int, float)) or not math.isfinite(self.min_percentage):
             raise PolicyConfigurationError(
                 f"Grade boundary percentage for '{self.label}' must be a finite number, "
@@ -65,6 +104,58 @@ class GradeBoundary:
                 f"Grade boundary percentage for '{self.label}' must be in [0.0, 100.0], "
                 f"got {self.min_percentage}."
             )
+
+
+# Illustrative reference presets (not official universal regulations)
+GRADING_PRESETS: Dict[str, List[GradeBoundary]] = {
+    "Default EduMetrics": [
+        GradeBoundary("A+", 90.0),
+        GradeBoundary("A", 80.0),
+        GradeBoundary("B+", 70.0),
+        GradeBoundary("B", 60.0),
+        GradeBoundary("C", 50.0),
+        GradeBoundary("D", 40.0),
+        GradeBoundary("F", 0.0),
+    ],
+    "Example School": [
+        GradeBoundary("A+", 90.0),
+        GradeBoundary("A", 80.0),
+        GradeBoundary("B", 70.0),
+        GradeBoundary("C", 60.0),
+        GradeBoundary("D", 40.0),
+        GradeBoundary("F", 0.0),
+    ],
+    "Example College": [
+        GradeBoundary("O", 90.0),
+        GradeBoundary("E", 80.0),
+        GradeBoundary("A", 70.0),
+        GradeBoundary("B", 60.0),
+        GradeBoundary("C", 50.0),
+        GradeBoundary("P", 40.0),
+        GradeBoundary("F", 0.0),
+    ],
+}
+
+
+def parse_grade_boundaries_string(spec: str) -> List[GradeBoundary]:
+    """Parse a formatted grade boundaries string (e.g. 'A+:90,A:80,B:70,F:0')."""
+    parts = [p.strip() for p in spec.split(",") if p.strip()]
+    if not parts:
+        raise PolicyConfigurationError("Grade boundary specification cannot be empty.")
+    boundaries = []
+    for part in parts:
+        if ":" not in part:
+            raise PolicyConfigurationError(
+                f"Invalid grade boundary format '{part}'. Expected 'Label:Percentage' (e.g. 'A:80')."
+            )
+        lbl, pct_str = part.split(":", 1)
+        lbl = lbl.strip()
+        try:
+            pct = float(pct_str.strip())
+        except (ValueError, TypeError):
+            raise PolicyConfigurationError(f"Non-numeric percentage '{pct_str.strip()}' for grade '{lbl}'.")
+        boundaries.append(GradeBoundary(label=lbl, min_percentage=pct))
+    return boundaries
 
 
 @dataclass
@@ -79,9 +170,17 @@ class GradingPolicy:
         GradeBoundary("D", 40.0),
         GradeBoundary("F", 0.0),
     ])
-    subject_pass_percentage: float = 40.0       # Minimum % needed in each individual subject
+    subject_pass_percentage: float = 40.0       # Minimum % needed in each individual subject by default
+    subject_pass_overrides: Dict[str, float] = field(default_factory=dict)  # Subject-specific pass %
     aggregate_pass_percentage: float = 40.0     # Minimum overall % needed across all subjects
     attendance_warning_threshold: float = 75.0  # Attendance % below which a warning is issued
+    enable_attendance_warning: bool = True      # Whether attendance is used as an academic warning indicator
+
+    def get_subject_pass_threshold(self, subject: str) -> float:
+        """Return the effective pass threshold percentage for a subject."""
+        if self.subject_pass_overrides and subject in self.subject_pass_overrides:
+            return float(self.subject_pass_overrides[subject])
+        return float(self.subject_pass_percentage)
 
     def validate(self) -> None:
         """Validate that grade boundaries and pass thresholds are sound and finite."""
@@ -99,8 +198,35 @@ class GradingPolicy:
                     f"{threshold_name} must be in [0.0, 100.0], got {threshold_val}."
                 )
 
-        if not self.grade_boundaries:
-            raise PolicyConfigurationError("Grade boundaries list cannot be empty.")
+        if not isinstance(self.enable_attendance_warning, bool):
+            raise PolicyConfigurationError("enable_attendance_warning must be a boolean.")
+
+        if not isinstance(self.subject_pass_overrides, dict):
+            raise PolicyConfigurationError("subject_pass_overrides must be a dictionary.")
+
+        for subj, thresh in self.subject_pass_overrides.items():
+            if not isinstance(thresh, (int, float)) or not math.isfinite(thresh):
+                raise PolicyConfigurationError(
+                    f"Subject pass threshold override for '{subj}' must be a finite number, got {thresh}."
+                )
+            if not (0.0 <= float(thresh) <= 100.0):
+                raise PolicyConfigurationError(
+                    f"Subject pass threshold override for '{subj}' must be in [0.0, 100.0], got {thresh}."
+                )
+
+        if not self.grade_boundaries or len(self.grade_boundaries) < 2:
+            raise PolicyConfigurationError("At least two grade boundaries are required (e.g. Pass and Fail).")
+
+        # Reject duplicate grade labels (case-insensitive check)
+        labels_seen: Set[str] = set()
+        for b in self.grade_boundaries:
+            clean_label = b.label.strip()
+            if not clean_label:
+                raise PolicyConfigurationError("Grade boundary label cannot be empty.")
+            norm_label = clean_label.upper()
+            if norm_label in labels_seen:
+                raise PolicyConfigurationError(f"Duplicate grade label '{b.label}' found. All grade boundary labels must be distinct.")
+            labels_seen.add(norm_label)
 
         # Boundaries must be strictly sorted in descending order of min_percentage
         prev_pct = 101.0
@@ -108,14 +234,15 @@ class GradingPolicy:
             if b.min_percentage >= prev_pct:
                 raise PolicyConfigurationError(
                     f"Grade boundaries must be strictly monotonically decreasing. "
-                    f"Boundary '{b.label}' ({b.min_percentage}%) violates order after {prev_pct}%."
+                    f"Grade boundary '{b.label}' ({b.min_percentage}%) must be strictly lower than preceding boundary ({prev_pct}%). "
+                    f"Duplicate or increasing percentage boundaries are rejected."
                 )
             prev_pct = b.min_percentage
 
         # The lowest boundary must start at 0.0 to ensure every percentage is covered
         if self.grade_boundaries[-1].min_percentage > 0.0:
             raise PolicyConfigurationError(
-                f"The lowest grade boundary must start at 0.0%, "
+                f"The lowest grade boundary must start at 0.0% and must begin at 0.0%, "
                 f"got {self.grade_boundaries[-1].min_percentage}% for '{self.grade_boundaries[-1].label}'."
             )
 
@@ -309,7 +436,8 @@ def evaluate_students(
 
             # Subject-level pass evaluation using full precision:
             raw_subj_pct = (score / max_m) * 100.0 if max_m > 0 else 0.0
-            if not is_greater_or_close(raw_subj_pct, policy.subject_pass_percentage):
+            subj_thresh = policy.get_subject_pass_threshold(subj)
+            if not is_greater_or_close(raw_subj_pct, subj_thresh):
                 if is_absent:
                     failed_subjects.append(f"{subj} (ABSENT/{max_m:.0f})")
                 else:
@@ -343,7 +471,7 @@ def evaluate_students(
             )
         failure_reason = " | ".join(reasons) if reasons else "None"
 
-        att_warning = bool(att_val < policy.attendance_warning_threshold)
+        att_warning = bool(policy.enable_attendance_warning and (att_val < policy.attendance_warning_threshold))
 
         record = {
             "student_id": sid,

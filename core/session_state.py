@@ -14,7 +14,7 @@ import hashlib
 from typing import Dict, List, Optional, Tuple, Any, MutableMapping
 import pandas as pd
 
-from core.grading import GradingPolicy, GradeBoundary
+from core.grading import GradingPolicy, GradeBoundary, InstitutionMetadata
 
 
 def _get_state(state: Optional[MutableMapping] = None) -> MutableMapping:
@@ -45,6 +45,17 @@ def init_session_state(state: Optional[MutableMapping] = None) -> MutableMapping
         "subject_metrics": None,
         "attention_students": None,
         "policy": GradingPolicy(),
+        "institution_metadata": InstitutionMetadata(),
+        "custom_boundaries": [
+            GradeBoundary("A+", 90.0),
+            GradeBoundary("A", 80.0),
+            GradeBoundary("B+", 70.0),
+            GradeBoundary("B", 60.0),
+            GradeBoundary("C", 50.0),
+            GradeBoundary("D", 40.0),
+            GradeBoundary("F", 0.0),
+        ],
+        "gb_version": 0,
         "subject_configs": {},
         "analysis_config": None,
         "upload_error": None,
@@ -84,9 +95,20 @@ def replace_active_dataset(
     s["upload_error"] = None
     s["config_stale"] = False
     s["subject_configs"] = {}
+    s["institution_metadata"] = InstitutionMetadata()
+    s["custom_boundaries"] = [
+        GradeBoundary("A+", 90.0),
+        GradeBoundary("A", 80.0),
+        GradeBoundary("B+", 70.0),
+        GradeBoundary("B", 60.0),
+        GradeBoundary("C", 50.0),
+        GradeBoundary("D", 40.0),
+        GradeBoundary("F", 0.0),
+    ]
+    s["gb_version"] = s.get("gb_version", 0) + 1
     # Clean up any lingering widget keys from previous datasets
     for k in list(s.keys()):
-        if any(k.startswith(prefix) for prefix in ("col_", "sel_subjs_", "max_m_", "pol_")):
+        if any(k.startswith(prefix) for prefix in ("col_", "sel_subjs_", "max_m_", "pass_m_", "pol_", "inst_", "gb_", "preset_", "subj_pass_overrides_")):
             del s[k]
 
 
@@ -102,11 +124,22 @@ def handle_failed_upload(
     s["dataset_fingerprint"] = None
     s["dataset_source"] = None
     s["subject_configs"] = {}
+    s["institution_metadata"] = InstitutionMetadata()
+    s["custom_boundaries"] = [
+        GradeBoundary("A+", 90.0),
+        GradeBoundary("A", 80.0),
+        GradeBoundary("B+", 70.0),
+        GradeBoundary("B", 60.0),
+        GradeBoundary("C", 50.0),
+        GradeBoundary("D", 40.0),
+        GradeBoundary("F", 0.0),
+    ]
+    s["gb_version"] = s.get("gb_version", 0) + 1
     s["upload_error"] = error_message
     s["config_stale"] = False
     # Clean up lingering widget keys
     for k in list(s.keys()):
-        if any(k.startswith(prefix) for prefix in ("col_", "sel_subjs_", "max_m_", "pol_")):
+        if any(k.startswith(prefix) for prefix in ("col_", "sel_subjs_", "max_m_", "pass_m_", "pol_", "inst_", "gb_", "preset_", "subj_pass_overrides_")):
             del s[k]
 
 
@@ -148,6 +181,9 @@ def create_analysis_config(
     aggregate_pass_percentage: float,
     attendance_warning_threshold: float,
     grade_boundaries: Optional[List[GradeBoundary]] = None,
+    subject_pass_overrides: Optional[Dict[str, float]] = None,
+    enable_attendance_warning: bool = True,
+    institution_metadata: Optional[InstitutionMetadata] = None,
 ) -> dict:
     """Construct a normalized dictionary tracking effective settings used for analysis."""
     if grade_boundaries is None:
@@ -164,6 +200,14 @@ def create_analysis_config(
         "aggregate_pass_percentage": float(aggregate_pass_percentage),
         "attendance_warning_threshold": float(attendance_warning_threshold),
         "grade_boundaries": tuple((b.label, float(b.min_percentage)) for b in grade_boundaries),
+        "subject_pass_overrides": {k: float(v) for k, v in sorted(subject_pass_overrides.items())} if subject_pass_overrides else {},
+        "enable_attendance_warning": bool(enable_attendance_warning),
+        "institution_metadata": (
+            institution_metadata.institution_name,
+            institution_metadata.academic_level,
+            institution_metadata.program_name,
+            institution_metadata.term,
+        ) if institution_metadata else ("", "", "", ""),
     }
 
 

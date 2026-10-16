@@ -760,3 +760,330 @@ def test_top_performers_ranking_uses_unrounded_precision(default_policy):
     assert top.iloc[1]["student_id"] == "S_LOWER"
 
 
+# =============================================================================
+# FIX 03: INSTITUTION CONFIGURATION & CUSTOM GRADING SYSTEM TESTS
+# =============================================================================
+
+def test_institution_metadata_data_class():
+    """Verify InstitutionMetadata fields, term aliasing, empty check, and dictionary export."""
+    from core.grading import InstitutionMetadata
+
+    meta_empty = InstitutionMetadata()
+    assert meta_empty.is_empty() is True
+
+    meta1 = InstitutionMetadata(
+        institution_name="Apex Global Academy",
+        academic_level="School",
+        program_name="Grade 10",
+        academic_term="Term 1",
+    )
+    assert meta1.is_empty() is False
+    assert meta1.term == "Term 1"
+    d = meta1.to_dict()
+    assert d["institution_name"] == "Apex Global Academy"
+    assert d["academic_level"] == "School"
+    assert d["academic_term"] == "Term 1"
+
+    # Alias term in constructor
+    meta2 = InstitutionMetadata(institution_name="Test College", term="Semester 2")
+    assert meta2.academic_term == "Semester 2"
+    assert meta2.term == "Semester 2"
+
+
+def test_grading_presets_integrity():
+    """Verify built-in reference presets are valid, monotonic, and start at 0.0%."""
+    from core.grading import GRADING_PRESETS
+
+    assert "Default EduMetrics" in GRADING_PRESETS
+    assert "Example School" in GRADING_PRESETS
+    assert "Example College" in GRADING_PRESETS
+
+    for preset_name, boundaries in GRADING_PRESETS.items():
+        pol = GradingPolicy(grade_boundaries=boundaries)
+        pol.validate()
+        assert boundaries[-1].min_percentage == 0.0
+        assert boundaries[-1].label == "F"
+
+
+def test_custom_school_and_college_grading_policies():
+    """Verify evaluating datasets with Example School and Example College presets."""
+    from core.grading import GRADING_PRESETS
+
+    df = pd.DataFrame({
+        "student_id": ["S1", "S2", "S3"],
+        "student_name": ["Alice", "Bob", "Charlie"],
+        "attendance": ["95.0", "90.0", "85.0"],
+        "Math": ["92.0", "84.0", "72.0"],
+    })
+
+    # School policy evaluation
+    school_policy = GradingPolicy(grade_boundaries=GRADING_PRESETS["Example School"])
+    df_school = evaluate_students(
+        df=df,
+        student_id_col="student_id",
+        name_col="student_name",
+        attendance_col="attendance",
+        subject_configs={"Math": 100.0},
+        policy=school_policy,
+    )
+    assert list(df_school["grade"]) == ["A+", "A", "B"]
+
+    # College policy evaluation
+    college_policy = GradingPolicy(grade_boundaries=GRADING_PRESETS["Example College"])
+    df_college = evaluate_students(
+        df=df,
+        student_id_col="student_id",
+        name_col="student_name",
+        attendance_col="attendance",
+        subject_configs={"Math": 100.0},
+        policy=college_policy,
+    )
+    assert list(df_college["grade"]) == ["O", "E", "A"]
+
+
+def test_custom_grade_labels_and_evaluation():
+    """Verify arbitrary custom grade labels evaluate accurately according to configured thresholds."""
+    custom_bounds = [
+        GradeBoundary("First Class with Distinction", 75.0),
+        GradeBoundary("First Class", 60.0),
+        GradeBoundary("Second Class", 50.0),
+        GradeBoundary("Pass Class", 40.0),
+        GradeBoundary("Unsuccessful", 0.0),
+    ]
+    policy = GradingPolicy(grade_boundaries=custom_bounds)
+    policy.validate()
+
+    df = pd.DataFrame({
+        "student_id": ["1", "2", "3", "4", "5"],
+        "student_name": ["A", "B", "C", "D", "E"],
+        "attendance": ["90", "90", "90", "90", "90"],
+        "Theory": ["80.0", "65.0", "55.0", "42.0", "30.0"],
+    })
+    df_eval = evaluate_students(
+        df=df,
+        student_id_col="student_id",
+        name_col="student_name",
+        attendance_col="attendance",
+        subject_configs={"Theory": 100.0},
+        policy=policy,
+    )
+    assert list(df_eval["grade"]) == [
+        "First Class with Distinction",
+        "First Class",
+        "Second Class",
+        "Pass Class",
+        "Unsuccessful",
+    ]
+
+
+def test_validation_rejects_duplicate_grade_labels():
+    """Verify policy rejects duplicate grade labels (including case-insensitive matches)."""
+    # Identical label
+    with pytest.raises(PolicyConfigurationError, match="Duplicate grade label 'A' found"):
+        GradingPolicy(grade_boundaries=[
+            GradeBoundary("A", 90.0),
+            GradeBoundary("A", 80.0),
+            GradeBoundary("F", 0.0),
+        ]).validate()
+
+    # Case-insensitive match
+    with pytest.raises(PolicyConfigurationError, match="Duplicate grade label 'a' found"):
+        GradingPolicy(grade_boundaries=[
+            GradeBoundary("A", 90.0),
+            GradeBoundary("a", 80.0),
+            GradeBoundary("F", 0.0),
+        ]).validate()
+
+
+def test_validation_rejects_duplicate_percentage_boundaries():
+    """Verify policy rejects identical percentage thresholds across tiers."""
+    with pytest.raises(PolicyConfigurationError, match="must be strictly lower than preceding boundary"):
+        GradingPolicy(grade_boundaries=[
+            GradeBoundary("A+", 80.0),
+            GradeBoundary("A", 80.0),
+            GradeBoundary("F", 0.0),
+        ]).validate()
+
+
+def test_validation_rejects_incorrect_boundary_ordering():
+    """Verify policy rejects non-monotonic or inverted boundary percentage order."""
+    with pytest.raises(PolicyConfigurationError, match="must be strictly lower than preceding boundary"):
+        GradingPolicy(grade_boundaries=[
+            GradeBoundary("A", 70.0),
+            GradeBoundary("B", 80.0),
+            GradeBoundary("F", 0.0),
+        ]).validate()
+
+
+def test_validation_rejects_missing_zero_percent_boundary():
+    """Verify policy rejects boundary sets where the lowest boundary does not start at 0.0%."""
+    with pytest.raises(PolicyConfigurationError, match="must begin at 0.0%"):
+        GradingPolicy(grade_boundaries=[
+            GradeBoundary("A", 90.0),
+            GradeBoundary("B", 70.0),
+            GradeBoundary("F", 35.0),
+        ]).validate()
+
+
+def test_validation_rejects_empty_grade_labels_and_fewer_than_two_boundaries():
+    """Verify boundary labels cannot be empty and at least two boundaries are required."""
+    with pytest.raises(PolicyConfigurationError, match="Grade boundary label cannot be empty"):
+        GradeBoundary("   ", 50.0)
+
+    with pytest.raises(PolicyConfigurationError, match="At least two grade boundaries are required"):
+        GradingPolicy(grade_boundaries=[GradeBoundary("F", 0.0)]).validate()
+
+
+def test_parse_grade_boundaries_string_utility():
+    """Verify parse_grade_boundaries_string parses valid strings and raises on invalid formats."""
+    from core.grading import parse_grade_boundaries_string
+
+    spec = "A+:90, A:80, B:70, C:60, D:40, F:0"
+    parsed = parse_grade_boundaries_string(spec)
+    assert len(parsed) == 6
+    assert parsed[0].label == "A+"
+    assert parsed[0].min_percentage == 90.0
+    assert parsed[-1].label == "F"
+    assert parsed[-1].min_percentage == 0.0
+
+    # Invalid specs
+    with pytest.raises(PolicyConfigurationError, match="specification cannot be empty"):
+        parse_grade_boundaries_string("   ")
+
+    with pytest.raises(PolicyConfigurationError, match="Invalid grade boundary format"):
+        parse_grade_boundaries_string("A+90,A80")
+
+    with pytest.raises(PolicyConfigurationError, match="Non-numeric percentage"):
+        parse_grade_boundaries_string("A:ninety,F:0")
+
+
+def test_per_subject_passing_threshold_overrides():
+    """Verify that custom per-subject passing thresholds enforce specific cutoffs per course."""
+    policy = GradingPolicy(
+        subject_pass_percentage=40.0,
+        aggregate_pass_percentage=40.0,
+        subject_pass_overrides={"Practical_Lab": 50.0},
+    )
+    policy.validate()
+
+    # Student 1: 45/100 in Theory (>=40 -> PASS), 22/50 (44%) in Practical_Lab (<50 -> FAIL)
+    # Student 2: 45/100 in Theory (>=40 -> PASS), 26/50 (52%) in Practical_Lab (>=50 -> PASS)
+    df = pd.DataFrame({
+        "student_id": ["S1", "S2"],
+        "student_name": ["Alice", "Bob"],
+        "attendance": ["90.0", "90.0"],
+        "Theory": ["45.0", "45.0"],
+        "Practical_Lab": ["22.0", "26.0"],
+    })
+    df_eval = evaluate_students(
+        df=df,
+        student_id_col="student_id",
+        name_col="student_name",
+        attendance_col="attendance",
+        subject_configs={"Theory": 100.0, "Practical_Lab": 50.0},
+        policy=policy,
+    )
+    assert df_eval.loc[df_eval["student_id"] == "S1", "status"].iloc[0] == "FAIL"
+    assert "Practical_Lab" in df_eval.loc[df_eval["student_id"] == "S1", "failure_reason"].iloc[0]
+    assert df_eval.loc[df_eval["student_id"] == "S2", "status"].iloc[0] == "PASS"
+
+
+def test_attendance_warning_toggle_and_separation_from_academic_pass():
+    """Verify attendance shortage warning can be disabled and never fails a student academically."""
+    # Policy with attendance warning enabled
+    policy_warn_on = GradingPolicy(
+        attendance_warning_threshold=75.0,
+        enable_attendance_warning=True,
+    )
+    # Policy with attendance warning disabled
+    policy_warn_off = GradingPolicy(
+        attendance_warning_threshold=75.0,
+        enable_attendance_warning=False,
+    )
+
+    df = pd.DataFrame({
+        "student_id": ["S1"],
+        "student_name": ["Alice"],
+        "attendance": ["60.0"],  # Below 75%
+        "Math": ["90.0"],        # Excellent academic score
+    })
+
+    df_warn_on = evaluate_students(
+        df=df,
+        student_id_col="student_id",
+        name_col="student_name",
+        attendance_col="attendance",
+        subject_configs={"Math": 100.0},
+        policy=policy_warn_on,
+    )
+    assert bool(df_warn_on["attendance_warning"].iloc[0]) is True
+    # Crucial rule: Low attendance does NOT cause academic failure
+    assert df_warn_on["status"].iloc[0] == "PASS"
+
+    df_warn_off = evaluate_students(
+        df=df,
+        student_id_col="student_id",
+        name_col="student_name",
+        attendance_col="attendance",
+        subject_configs={"Math": 100.0},
+        policy=policy_warn_off,
+    )
+    assert bool(df_warn_off["attendance_warning"].iloc[0]) is False
+    assert df_warn_off["status"].iloc[0] == "PASS"
+
+
+def test_report_text_summary_includes_institution_metadata_and_policy():
+    """Verify generate_text_summary includes metadata and detailed policy snapshot."""
+    from core.reports import generate_text_summary
+    from core.grading import InstitutionMetadata
+    from core.analytics import compute_class_summary, compute_subject_analytics, identify_academic_attention_cases
+
+    meta = InstitutionMetadata(
+        institution_name="St. Xavier's International",
+        academic_level="School",
+        program_name="Class 10-A",
+        academic_term="Mid-Term 2026",
+    )
+    policy = GradingPolicy(
+        subject_pass_percentage=40.0,
+        aggregate_pass_percentage=45.0,
+        attendance_warning_threshold=80.0,
+        subject_pass_overrides={"Science": 50.0},
+    )
+
+    df = pd.DataFrame({
+        "student_id": ["1"],
+        "student_name": ["Alice"],
+        "attendance": ["85.0"],
+        "Math": ["90.0"],
+        "Science": ["80.0"],
+    })
+    sub_cfgs = {"Math": 100.0, "Science": 100.0}
+    df_eval = evaluate_students(
+        df=df,
+        student_id_col="student_id",
+        name_col="student_name",
+        attendance_col="attendance",
+        subject_configs=sub_cfgs,
+        policy=policy,
+    )
+    summary = compute_class_summary(df_eval)
+    metrics = compute_subject_analytics(df_eval, sub_cfgs, policy.subject_pass_overrides)
+    attention = identify_academic_attention_cases(df_eval, sub_cfgs, policy.subject_pass_overrides)
+
+    rep = generate_text_summary(
+        class_summary=summary,
+        subject_metrics=metrics,
+        attention_students=attention,
+        policy=policy,
+        dataset_name="marks.csv",
+        institution_metadata=meta,
+    )
+    assert "[0] INSTITUTION DETAILS" in rep
+    assert "St. Xavier's International" in rep
+    assert "Class 10-A" in rep
+    assert "Mid-Term 2026" in rep
+    assert "Subject Pass Overrides   : Science: 50.0%" in rep
+    assert "Aggregate Pass Threshold : 45.0%" in rep
+
+

@@ -1,15 +1,15 @@
 # System Architecture & Technical Design
 ## EduMetrics — Academic Performance Analytics Platform
 
-**Document Version:** 1.0.0  
-**Target Release:** EduMetrics V1  
+**Document Version:** 1.3.0  
+**Target Release:** EduMetrics V1 (Fix 03 Hardening)  
 **Architecture Pattern:** Headless Modular Monolith with Ephemeral Presentation  
 
 ---
 
 ## 1. High-Level Architectural Overview
 
-EduMetrics is organized as a **Headless Modular Monolith**. The core business logic, validation engine, and statistical calculations are completely isolated from the presentation layer. Neither `core/` nor `security/` imports `streamlit`.
+EduMetrics is organized as a **Headless Modular Monolith**. The core business logic, validation engine, statistical calculations, and institutional configuration management are completely isolated from the presentation layer. Neither `core/` nor `security/` imports `streamlit`.
 
 ```
 +-------------------------------------------------------------------------------+
@@ -19,7 +19,8 @@ EduMetrics is organized as a **Headless Modular Monolith**. The core business lo
 |   |         Streamlit Web App          |    |       Standalone CLI        |   |
 |   |             (app.py)               |    |          (main.py)          |   |
 |   |  - Session-scoped state (ephemeral)|    |  - Headless argparse        |   |
-|   |  - Interactive widgets & mapping   |    |  - Formatted terminal table |   |
+|   |  - 7 configuration sections        |    |  - Config presets & flags   |   |
+|   |  - Dynamic grade boundary editor   |    |  - Formatted terminal table |   |
 |   |  - Visual charts & CSV download    |    |  - Direct exit codes (0/1)  |   |
 |   +-----------------+------------------+    +--------------+--------------+   |
 +---------------------|--------------------------------------|------------------+
@@ -50,8 +51,9 @@ EduMetrics is organized as a **Headless Modular Monolith**. The core business lo
 |                                       |                                       |
 |   +-----------------------------------v-----------------------------------+   |
 |   | 4. Policy & Grading Engine (core/grading.py)                          |   |
-|   |    - Heterogeneous subject maximums  - Proportional percentage        |   |
-|   |    - Configurable grade boundaries   - Subject & aggregate pass/fail  |   |
+|   |    - InstitutionMetadata             - Heterogeneous subject maximums |   |
+|   |    - Custom grade boundaries (2-12)  - Proportional percentage        |   |
+|   |    - Built-in presets & overrides    - Subject & aggregate pass/fail  |   |
 |   +-----------------------------------+-----------------------------------+   |
 |                                       |                                       |
 |   +-----------------------------------v-----------------------------------+   |
@@ -63,6 +65,13 @@ EduMetrics is organized as a **Headless Modular Monolith**. The core business lo
 |   +-----------------------------------v-----------------------------------+   |
 |   | 6. Reporting & Export Sanitizer (core/reports.py)                     |   |
 |   |    - CSV formula injection defusion  - Structured summary packaging   |   |
+|   |    - Institutional metadata header   - Subject pass cutoffs in audit  |   |
+|   +-----------------------------------+-----------------------------------+   |
+|                                       |                                       |
+|   +-----------------------------------v-----------------------------------+   |
+|   | 7. Session State & Integrity Manager (core/session_state.py)          |   |
+|   |    - Multi-user isolation            - Dataset fingerprinting (MD5)   |   |
+|   |    - Automated staleness detection   - Ephemeral configuration resets |   |
 |   +-----------------------------------------------------------------------+   |
 +-------------------------------------------------------------------------------+
 ```
@@ -73,24 +82,26 @@ EduMetrics is organized as a **Headless Modular Monolith**. The core business lo
 
 | Module | Location | Purpose & Architectural Invariants |
 | :--- | :--- | :--- |
-| **Security** | `security/upload_checks.py` | Enforces byte size limits, checks magic bytes against binary/null payloads, caps row/column counts, and provides formula injection defusion. |
+| **Security** | `security/upload_checks.py` | Enforces byte size limits, checks magic bytes against binary/null payloads, caps row/column counts, and provides formula injection defusion (CWE-1236). |
 | **Loader** | `core/loader.py` | Safe byte reading, character encoding detection (UTF-8, BOM, Latin-1), string ID preservation, raw duplicate header detection. |
 | **Validation** | `core/validation.py` | Validates presence of mandatory columns, duplicate IDs, attendance range [0, 100], and score boundaries [0, max_mark]. Returns structured dataclasses. |
-| **Grading** | `core/grading.py` | Proportional score normalization across mixed maximum marks, monotonic grade boundary validation, dual-layer pass/fail logic, attendance warnings. |
+| **Grading** | `core/grading.py` | Proportional score normalization across mixed maximum marks; `InstitutionMetadata` dataclass; `GRADING_PRESETS` registry; `GradingPolicy` with `subject_pass_overrides` and `enable_attendance_warning`; strict monotonic grade boundary validation; direct invocation fail-safe validation. |
 | **Analytics** | `core/analytics.py` | Pure NumPy/Pandas calculation of class averages, medians, standard deviations, extremes, pass rates, subject difficulty rankings, tie-broken leaderboards, and rule-based attention indicators. |
-| **Reporting** | `core/reports.py` | Sanitized CSV generation (defusing spreadsheet formulas per CWE-1236) and formatted plain-text ASCII reports. |
-| **CLI** | `main.py` | Headless command-line entrypoint using `argparse`. Zero web framework dependency. |
-| **Web UI** | `app.py` | Streamlit web application. Manages UI tabs, session state, interactive widgets, and downloads. |
+| **Reporting** | `core/reports.py` | Sanitized CSV generation (defusing spreadsheet formulas per CWE-1236) and formatted plain-text ASCII reports including `[0] INSTITUTION DETAILS`, applied policies, and subject passing thresholds. |
+| **Session State** | `core/session_state.py` | Session state initialization, deterministic dataset fingerprinting, configuration tracking (`create_analysis_config`), automated invalidation (`is_analysis_stale`), and dynamic widget key management. |
+| **CLI** | `main.py` | Headless command-line entrypoint using `argparse`. Zero web framework dependency. Supports institutional metadata, custom boundaries, presets, and overrides. |
+| **Web UI** | `app.py` | Streamlit web application. Manages 7 UI configuration sections, interactive grade boundary editor, live policy previews, session state, charts, and downloads. |
 
 ---
 
 ## 3. State Management & Session Lifecycle
 
 In EduMetrics V1:
-1. **Zero Server-Side Storage:** No student records are written to disk or database.
+1. **Zero Server-Side Storage:** No student records or institutional configurations are written to disk or database. All data is transient.
 2. **Session Ephemerality:** All data loaded via the web dashboard is stored exclusively within Streamlit's `st.session_state`.
-3. **Session Dereferencing:** When a user closes their browser tab or clicks the **"Start New Analysis / Reset"** button, all `session_state` keys are purged, releasing DataFrames for Python garbage collection.
-4. **Thread Safety & Multi-User Isolation:** Core calculation functions accept `(df, policy)` as explicit arguments and return new objects. Because there are no global mutable variables, concurrent user requests execute completely independently.
+3. **Configuration & Result Invalidation:** The session state manager maintains a configuration snapshot in `st.session_state.analysis_config`. If an educator alters grade boundaries, subject maximum marks, per-subject passing thresholds, attendance rules, or column mappings, `is_analysis_stale(st.session_state)` immediately returns `True`, preventing outdated analytics or misleading reports from being displayed.
+4. **Session Dereferencing & Reset:** When a user closes their browser tab or clicks the **"Start New Analysis / Reset"** button, all `session_state` keys (including uploaded data, institutional metadata, and dynamic widget states) are purged, releasing DataFrames for Python garbage collection.
+5. **Thread Safety & Multi-User Isolation:** Core calculation functions accept `(df, policy)` as explicit arguments and return new objects. Because there are no global mutable variables, concurrent user requests execute completely independently.
 
 ---
 
@@ -103,6 +114,7 @@ For future institutional releases requiring persistent storage, multi-tenancy, a
 CREATE TABLE institutions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(255) NOT NULL,
+    academic_level VARCHAR(32) NOT NULL CHECK (academic_level IN ('School', 'College', 'University', 'Other')),
     subdomain VARCHAR(64) UNIQUE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -131,6 +143,18 @@ CREATE TABLE classes (
     term_id UUID NOT NULL REFERENCES academic_terms(id) ON DELETE CASCADE,
     name VARCHAR(128) NOT NULL, -- e.g. "Class 10-A", "B.Tech CSE Year 3"
     department VARCHAR(64)
+);
+
+CREATE TABLE grading_policies (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    institution_id UUID NOT NULL REFERENCES institutions(id) ON DELETE CASCADE,
+    name VARCHAR(128) NOT NULL, -- e.g. "College Standard", "School 2026"
+    boundaries JSONB NOT NULL,  -- e.g. [{"grade": "O", "min": 90}, ...]
+    subject_pass_threshold NUMERIC(5,2) DEFAULT 40.0,
+    aggregate_pass_threshold NUMERIC(5,2) DEFAULT 40.0,
+    attendance_warning_threshold NUMERIC(5,2) DEFAULT 75.0,
+    enable_attendance_warning BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE students (
@@ -190,3 +214,6 @@ CREATE TABLE audit_events (
 3. **Headless Engine vs. Streamlit Coupling:**
    - *Chosen:* Strict decoupling.
    - *Rationale:* Enables CLI execution (`main.py`) for automated batch jobs, automated testing with `pytest`, and easy migration to alternative frontends (e.g., FastAPI + React) in the future.
+4. **Configurable Academic Policies vs. Hardcoded Assumptions:**
+   - *Chosen:* Fully configurable `GradingPolicy` with immutable evaluation parameters.
+   - *Rationale:* Different institutions (schools, colleges, universities) use distinct grading brackets, passing criteria, and course weights. Hardcoding policies would limit applicability and compromise academic correctness.

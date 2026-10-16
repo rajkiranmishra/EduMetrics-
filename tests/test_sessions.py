@@ -737,3 +737,93 @@ def test_streamlit_validation_error_display_on_non_finite_marks():
         # Check error was rendered
         assert any("Validation Failed" in err.value for err in at.error)
 
+
+# =============================================================================
+# FIX 03: SESSION CONFIGURATION INTEGRITY & PRESET SWITCHING TESTS
+# =============================================================================
+
+def test_fix03_config_staleness_on_policy_and_metadata_modifications():
+    """Verify that changing grade boundaries, overrides, attendance toggle, or metadata invalidates analysis results."""
+    from core.grading import InstitutionMetadata, GradeBoundary
+
+    base_cfg = create_analysis_config(
+        dataset_fingerprint="fp_abc123",
+        student_id_col="student_id",
+        name_col="student_name",
+        attendance_col="attendance",
+        department_col=None,
+        selected_subjects=["Math", "Science"],
+        subject_configs={"Math": 100.0, "Science": 100.0},
+        subject_pass_percentage=40.0,
+        aggregate_pass_percentage=40.0,
+        attendance_warning_threshold=75.0,
+        grade_boundaries=[GradeBoundary("A", 80.0), GradeBoundary("F", 0.0)],
+        subject_pass_overrides={"Science": 50.0},
+        enable_attendance_warning=True,
+        institution_metadata=InstitutionMetadata(institution_name="St. Mary's"),
+    )
+
+    # 1. Changing grade boundaries
+    cfg_gb = dict(base_cfg)
+    cfg_gb["grade_boundaries"] = (("A+", 90.0), ("A", 80.0), ("F", 0.0))
+    assert is_analysis_stale(cfg_gb, base_cfg) is True
+
+    # 2. Changing subject pass overrides
+    cfg_overrides = dict(base_cfg)
+    cfg_overrides["subject_pass_overrides"] = {"Science": 45.0}
+    assert is_analysis_stale(cfg_overrides, base_cfg) is True
+
+    # 3. Changing attendance warning enable toggle
+    cfg_att_toggle = dict(base_cfg)
+    cfg_att_toggle["enable_attendance_warning"] = False
+    assert is_analysis_stale(cfg_att_toggle, base_cfg) is True
+
+    # 4. Changing institution metadata
+    cfg_meta = dict(base_cfg)
+    cfg_meta["institution_metadata"] = ("St. Jude's", "School", "", "")
+    assert is_analysis_stale(cfg_meta, base_cfg) is True
+
+
+def test_apptest_institution_metadata_and_custom_preset_flow():
+    """Verify end-to-end Streamlit UI flow: applying College preset and configuring institution details."""
+    at = AppTest.from_file("app.py")
+    at.run()
+
+    # 1. Load built-in School sample dataset
+    at.button[0].click().run()
+    assert at.session_state["raw_df"] is not None
+
+    # 2. Configure institution metadata in text inputs
+    inst_input = [ti for ti in at.text_input if "Institution Name" in ti.label][0]
+    inst_input.set_value("Oxford International Academy").run()
+
+    prog_input = [ti for ti in at.text_input if "Class / Course" in ti.label][0]
+    prog_input.set_value("Class 10").run()
+
+    # 3. Apply College grading preset
+    preset_sel = [sb for sb in at.selectbox if "Select Sample Preset" in sb.label][0]
+    preset_sel.select("Example College").run()
+
+    apply_btn = [b for b in at.button if "Apply Preset" in b.label][0]
+    apply_btn.click().run()
+
+    # Verify custom_boundaries updated to College preset
+    labels = [b.label for b in at.session_state["custom_boundaries"]]
+    assert "O" in labels
+    assert "E" in labels
+    assert "A" in labels
+
+    # 4. Run Academic Analysis
+    run_btn = [b for b in at.button if "Run Academic Analysis" in b.label][0]
+    run_btn.click().run()
+
+    assert not at.exception
+    assert at.session_state["evaluated_df"] is not None
+    assert at.session_state["institution_metadata"].institution_name == "Oxford International Academy"
+    assert at.session_state["institution_metadata"].program_name == "Class 10"
+
+    # College preset grades should be present in evaluated records
+    eval_grades = set(at.session_state["evaluated_df"]["grade"])
+    assert any(g in ["O", "E", "A"] for g in eval_grades)
+
+

@@ -25,6 +25,17 @@ from core.analytics import (
     get_top_performers,
 )
 from core.reports import generate_text_summary, generate_sanitized_csv
+from core.session_state import (
+    init_session_state,
+    clear_analysis_results,
+    replace_active_dataset,
+    handle_failed_upload,
+    clear_removed_upload,
+    reset_complete_workflow,
+    create_analysis_config,
+    is_analysis_stale,
+    compute_dataset_fingerprint,
+)
 
 # Page configuration
 st.set_page_config(
@@ -72,29 +83,13 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# Initialize Session State
-if "raw_df" not in st.session_state:
-    st.session_state.raw_df = None
-if "dataset_name" not in st.session_state:
-    st.session_state.dataset_name = None
-if "evaluated_df" not in st.session_state:
-    st.session_state.evaluated_df = None
-if "class_summary" not in st.session_state:
-    st.session_state.class_summary = None
-if "subject_metrics" not in st.session_state:
-    st.session_state.subject_metrics = None
-if "attention_students" not in st.session_state:
-    st.session_state.attention_students = None
-if "policy" not in st.session_state:
-    st.session_state.policy = GradingPolicy()
-if "subject_configs" not in st.session_state:
-    st.session_state.subject_configs = {}
+# Initialize Centralized Session State
+init_session_state()
 
 
 def reset_session():
-    """Clear all session data from memory."""
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
+    """Reset the session workflow and clear active session references."""
+    reset_complete_workflow()
     st.rerun()
 
 
@@ -111,6 +106,13 @@ with st.sidebar:
         st.markdown("---")
         if st.button("🔄 Start New Analysis / Reset", use_container_width=True):
             reset_session()
+    elif st.session_state.raw_df is not None:
+        st.info(f"Loaded Dataset: **{st.session_state.dataset_name}**")
+        st.write(f"📊 Records: **{len(st.session_state.raw_df)}**")
+        st.caption("⚙️ Configure settings and click 'Run Academic Analysis' to view metrics.")
+        st.markdown("---")
+        if st.button("🔄 Start New Analysis / Reset", use_container_width=True):
+            reset_session()
     else:
         st.info("No active dataset loaded. Please upload a CSV to begin.")
 
@@ -119,7 +121,7 @@ with st.sidebar:
     st.caption(
         "EduMetrics V1 operates in zero-login, session-ephemeral mode. "
         "No student records are stored on disk or database. "
-        "All data is freed when the session ends."
+        "Session data is held in memory for the active user session only."
     )
 
 
@@ -211,38 +213,70 @@ with tabs[1]:
     uploaded_file = st.file_uploader(
         "Upload Academic Marks CSV",
         type=["csv"],
+        key=f"csv_uploader_{st.session_state.uploader_key}",
         help=f"File must be plain text CSV, under {MAX_FILE_SIZE_BYTES // (1024*1024)} MB and <= {MAX_ROW_COUNT} rows.",
     )
 
-    # Allow one-click loading of sample datasets
+    sample_loaded = False
     st.write("**Or load a built-in fictional dataset directly:**")
     c1, c2, _ = st.columns([1, 1, 2])
     with c1:
         if st.button("Load Sample School Dataset"):
-            with open("data/sample_school.csv", "rb") as f:
-                df, cols = load_csv_from_bytes(f.read(), "sample_school.csv")
-                st.session_state.raw_df = df
-                st.session_state.dataset_name = "sample_school.csv"
-                st.rerun()
+            try:
+                with open("data/sample_school.csv", "rb") as f:
+                    file_bytes = f.read()
+                df, cols = load_csv_from_bytes(file_bytes, "sample_school.csv")
+                fingerprint = compute_dataset_fingerprint(file_bytes)
+                replace_active_dataset(df, "sample_school.csv", fingerprint, source="sample")
+                st.session_state.uploader_key += 1
+                sample_loaded = True
+            except Exception as err:
+                handle_failed_upload(f"Failed to load sample dataset: {err}")
+                sample_loaded = True
+            st.rerun()
     with c2:
         if st.button("Load Sample College Dataset"):
-            with open("data/sample_college.csv", "rb") as f:
-                df, cols = load_csv_from_bytes(f.read(), "sample_college.csv")
-                st.session_state.raw_df = df
-                st.session_state.dataset_name = "sample_college.csv"
-                st.rerun()
+            try:
+                with open("data/sample_college.csv", "rb") as f:
+                    file_bytes = f.read()
+                df, cols = load_csv_from_bytes(file_bytes, "sample_college.csv")
+                fingerprint = compute_dataset_fingerprint(file_bytes)
+                replace_active_dataset(df, "sample_college.csv", fingerprint, source="sample")
+                st.session_state.uploader_key += 1
+                sample_loaded = True
+            except Exception as err:
+                handle_failed_upload(f"Failed to load sample dataset: {err}")
+                sample_loaded = True
+            st.rerun()
 
-    # Process uploaded file if user provided one
-    if uploaded_file is not None:
+    # Process uploaded file if user provided one and a sample dataset was not just selected
+    if not sample_loaded and uploaded_file is not None:
         try:
             file_bytes = uploaded_file.getvalue()
-            df, cols = load_csv_from_bytes(file_bytes, uploaded_file.name)
-            st.session_state.raw_df = df
-            st.session_state.dataset_name = uploaded_file.name
-            st.success(f"Loaded '{uploaded_file.name}' with {len(df)} records.")
+            fingerprint = compute_dataset_fingerprint(file_bytes)
+            # Detect actual dataset change or initial upload
+            if (
+                fingerprint != st.session_state.dataset_fingerprint
+                or st.session_state.dataset_source != "upload"
+            ):
+                df, cols = load_csv_from_bytes(file_bytes, uploaded_file.name)
+                replace_active_dataset(df, uploaded_file.name, fingerprint, source="upload")
+                st.success(f"Loaded '{uploaded_file.name}' with {len(df)} records.")
         except IngestionError as err:
-            st.error(f"Upload rejected: {err}")
-            st.session_state.raw_df = None
+            handle_failed_upload(f"Upload rejected: {err}")
+        except Exception:
+            handle_failed_upload(
+                "Upload rejected: The file could not be parsed as a valid CSV. Please ensure it is well-formed."
+            )
+    elif not sample_loaded and uploaded_file is None:
+        # If user removed the file in the uploader and the active dataset was from an upload
+        if st.session_state.dataset_source == "upload":
+            clear_removed_upload()
+
+    # Display upload errors if any
+    if st.session_state.upload_error:
+        st.error(st.session_state.upload_error)
+        st.info("ℹ️ Previous dataset and analysis results have been cleared to prevent data inconsistency. Please provide a valid CSV.")
 
     # Configuration Form
     if st.session_state.raw_df is not None:
@@ -263,17 +297,37 @@ with tabs[1]:
         cm1, cm2, cm3, cm4 = st.columns(4)
         with cm1:
             id_idx = find_default(["student_id", "id", "roll", "reg_no"], available_cols)
-            selected_id = st.selectbox("Student ID *", available_cols, index=id_idx)
+            selected_id = st.selectbox(
+                "Student ID *",
+                available_cols,
+                index=id_idx,
+                key=f"col_id_{st.session_state.dataset_fingerprint}",
+            )
         with cm2:
             name_idx = find_default(["student_name", "name", "full_name"], available_cols)
-            selected_name = st.selectbox("Student Name *", available_cols, index=name_idx)
+            selected_name = st.selectbox(
+                "Student Name *",
+                available_cols,
+                index=name_idx,
+                key=f"col_name_{st.session_state.dataset_fingerprint}",
+            )
         with cm3:
             att_idx = find_default(["attendance", "attendance_pct", "att"], available_cols)
-            selected_att = st.selectbox("Attendance (%) *", available_cols, index=att_idx)
+            selected_att = st.selectbox(
+                "Attendance (%) *",
+                available_cols,
+                index=att_idx,
+                key=f"col_att_{st.session_state.dataset_fingerprint}",
+            )
         with cm4:
             dept_opts = ["None"] + available_cols
             dept_idx = find_default(["department", "dept", "section", "class"], dept_opts)
-            selected_dept_opt = st.selectbox("Department / Section", dept_opts, index=dept_idx)
+            selected_dept_opt = st.selectbox(
+                "Department / Section",
+                dept_opts,
+                index=dept_idx,
+                key=f"col_dept_{st.session_state.dataset_fingerprint}",
+            )
             selected_dept = None if selected_dept_opt == "None" else selected_dept_opt
 
         # Subject columns selection
@@ -287,6 +341,7 @@ with tabs[1]:
             "Select Subject Columns for Analysis *",
             options=candidate_subjects,
             default=candidate_subjects,
+            key=f"sel_subjs_{st.session_state.dataset_fingerprint}",
             help="Select all columns that represent academic course marks.",
         )
 
@@ -305,7 +360,7 @@ with tabs[1]:
                     max_value=500.0,
                     value=default_max,
                     step=5.0,
-                    key=f"max_m_{subj}",
+                    key=f"max_m_{subj}_{st.session_state.dataset_fingerprint}",
                 )
                 subject_configs[subj] = float(max_val)
 
@@ -319,6 +374,7 @@ with tabs[1]:
                 max_value=100.0,
                 value=40.0,
                 step=1.0,
+                key=f"pol_subj_{st.session_state.dataset_fingerprint}",
                 help="Minimum percentage required in each individual subject.",
             )
         with pol2:
@@ -328,6 +384,7 @@ with tabs[1]:
                 max_value=100.0,
                 value=40.0,
                 step=1.0,
+                key=f"pol_agg_{st.session_state.dataset_fingerprint}",
                 help="Minimum normalized aggregate percentage required overall.",
             )
         with pol3:
@@ -337,7 +394,33 @@ with tabs[1]:
                 max_value=100.0,
                 value=75.0,
                 step=1.0,
+                key=f"pol_att_{st.session_state.dataset_fingerprint}",
                 help="Attendance percentage below which students receive an attendance warning.",
+            )
+
+        # Build current effective configuration and verify staleness
+        current_config = create_analysis_config(
+            dataset_fingerprint=st.session_state.dataset_fingerprint or "",
+            student_id_col=selected_id,
+            name_col=selected_name,
+            attendance_col=selected_att,
+            department_col=selected_dept,
+            selected_subjects=selected_subjects,
+            subject_configs=subject_configs,
+            subject_pass_percentage=subj_pass_pct,
+            aggregate_pass_percentage=agg_pass_pct,
+            attendance_warning_threshold=att_warn_thresh,
+        )
+
+        if is_analysis_stale(current_config, st.session_state.analysis_config):
+            clear_analysis_results()
+            st.session_state.config_stale = True
+
+        if st.session_state.config_stale and st.session_state.evaluated_df is None:
+            st.warning(
+                "⚠️ Academic configuration or column mapping has changed. "
+                "Previous analysis results have been invalidated to maintain data integrity. "
+                "Please click **'🚀 Run Academic Analysis'** below to generate updated results."
             )
 
         # Run Analysis Button
@@ -389,6 +472,8 @@ with tabs[1]:
                     st.session_state.attention_students = attention_cases
                     st.session_state.policy = policy
                     st.session_state.subject_configs = subject_configs
+                    st.session_state.analysis_config = current_config
+                    st.session_state.config_stale = False
 
                     st.success("✅ Analysis successfully computed! View the results across the tabs above.")
 
@@ -437,11 +522,11 @@ with tabs[2]:
                     "Highest Score (%)", "Lowest Score (%)", "Attendance Warnings"
                 ],
                 "Value": [
-                    summary.total_students, summary.passed_students, summary.failed_students,
+                    str(summary.total_students), str(summary.passed_students), str(summary.failed_students),
                     f"{summary.average_percentage:.2f}%", f"{summary.median_percentage:.2f}%", f"{summary.std_percentage:.2f}",
                     f"{summary.highest_percentage:.1f}% ({summary.top_student_name})",
                     f"{summary.lowest_percentage:.1f}% ({summary.lowest_student_name})",
-                    summary.attendance_shortage_count
+                    str(summary.attendance_shortage_count)
                 ]
             })
             st.dataframe(stat_df, hide_index=True, use_container_width=True)

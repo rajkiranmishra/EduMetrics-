@@ -1,8 +1,8 @@
 # System Architecture & Technical Design
 ## EduMetrics — Academic Performance Analytics Platform
 
-**Document Version:** 1.3.0  
-**Target Release:** EduMetrics V1 (Fix 03 Hardening)  
+**Document Version:** 1.4.0  
+**Target Release:** EduMetrics V1 (Fix 04 Security & Concurrency Hardened)  
 **Architecture Pattern:** Headless Modular Monolith with Ephemeral Presentation  
 
 ---
@@ -35,6 +35,8 @@ EduMetrics is organized as a **Headless Modular Monolith**. The core business lo
 |   | 1. Security & Ingestion Checks (security/upload_checks.py)             |   |
 |   |    - File size limit (< 2 MB)        - Byte header inspection         |   |
 |   |    - Row limit (< 5,000 rows)        - Column count limit (< 30 cols) |   |
+|   |    - Raw cell cap (< 512 chars)      - Header length (< 64 chars)     |   |
+|   |    - Filename sanitization           - Bidi & control char detection  |   |
 |   +-----------------------------------+-----------------------------------+   |
 |                                       |                                       |
 |   +-----------------------------------v-----------------------------------+   |

@@ -4,10 +4,13 @@ Performs deterministic, row-and-column-level validation:
 1. Verifies presence of mandatory columns (including mapped subject columns).
 2. Enforces unique, non-null Student Identifiers (preserving leading zeros, case-insensitive collision check).
 3. Enforces non-null, non-empty Student Names (supporting international characters).
-4. Validates Attendance percentages within [0.0, 100.0] as finite numbers.
-5. Validates Subject scores within [0.0, SubjectMaxMark] as finite numbers or explicit absence markers ('ABS', 'ABSENT').
-6. Flags missing or unparseable numeric values with human-friendly row references.
-7. Rejects non-finite numbers (NaN, Inf, -Inf, Infinity).
+4. Enforces bounds on string field lengths to prevent layout and memory DoS.
+5. Rejects unprintable ASCII control characters and bidirectional Unicode overrides.
+6. Validates Attendance percentages within [0.0, 100.0] as finite numbers.
+7. Validates Subject scores within [0.0, SubjectMaxMark] as finite numbers or explicit absence markers ('ABS', 'ABSENT').
+8. Flags missing or unparseable numeric values with human-friendly row references.
+9. Rejects non-finite numbers (NaN, Inf, -Inf, Infinity).
+10. Caps maximum error collection to prevent resource exhaustion from adversarial inputs.
 """
 
 import math
@@ -15,6 +18,14 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Any, Set, Tuple
 import pandas as pd
 import numpy as np
+
+from security.upload_checks import (
+    has_prohibited_characters,
+    MAX_STUDENT_ID_LENGTH,
+    MAX_STUDENT_NAME_LENGTH,
+    MAX_DEPARTMENT_LENGTH,
+    MAX_VALIDATION_ERRORS,
+)
 
 SUPPORTED_ABSENCE_MARKERS: Set[str] = {"ABS", "ABSENT"}
 
@@ -154,6 +165,22 @@ def validate_student_ids(df: pd.DataFrame, student_id_col: str) -> List[Validati
             ))
             continue
 
+        if len(val_str) > MAX_STUDENT_ID_LENGTH:
+            errors.append(ValidationError(
+                message=f"Student ID exceeds maximum allowed length of {MAX_STUDENT_ID_LENGTH} characters ({len(val_str)} characters detected).",
+                row=row_num,
+                column=student_id_col,
+            ))
+            continue
+
+        if has_prohibited_characters(val_str):
+            errors.append(ValidationError(
+                message="Student ID contains unprintable control characters or prohibited Unicode sequences.",
+                row=row_num,
+                column=student_id_col,
+            ))
+            continue
+
         norm_id = val_str.upper()
         if norm_id in seen_ids:
             first_row = seen_ids[norm_id]
@@ -172,7 +199,7 @@ def validate_student_names(df: pd.DataFrame, name_col: str) -> List[ValidationEr
     """Verify that student names are non-null and non-empty.
 
     Accepts arbitrary legitimate international names (e.g. Unicode, accented characters,
-    hyphens, apostrophes) while rejecting empty, whitespace-only, or missing values.
+    hyphens, apostrophes) while rejecting empty, whitespace-only, unprintable, or oversized values.
     """
     errors: List[ValidationError] = []
     if name_col not in df.columns:
@@ -187,6 +214,23 @@ def validate_student_names(df: pd.DataFrame, name_col: str) -> List[ValidationEr
                 row=row_num,
                 column=name_col,
             ))
+            continue
+
+        if len(val_str) > MAX_STUDENT_NAME_LENGTH:
+            errors.append(ValidationError(
+                message=f"Student Name exceeds maximum allowed length of {MAX_STUDENT_NAME_LENGTH} characters ({len(val_str)} characters detected).",
+                row=row_num,
+                column=name_col,
+            ))
+            continue
+
+        if has_prohibited_characters(val_str):
+            errors.append(ValidationError(
+                message="Student Name contains unprintable control characters or prohibited Unicode sequences.",
+                row=row_num,
+                column=name_col,
+            ))
+            continue
 
     return errors
 
@@ -374,13 +418,33 @@ def validate_dataset(
         for idx, val in enumerate(df[department_col]):
             row_num = idx + 2
             val_str = str(val).strip() if val is not None and not pd.isna(val) else ""
-            if not val_str or val_str.lower() in ("nan", "none", "null"):
+            if len(val_str) > MAX_DEPARTMENT_LENGTH:
+                all_errors.append(ValidationError(
+                    message=f"Department name exceeds maximum allowed length of {MAX_DEPARTMENT_LENGTH} characters.",
+                    row=row_num,
+                    column=department_col,
+                ))
+            elif has_prohibited_characters(val_str):
+                all_errors.append(ValidationError(
+                    message="Department name contains unprintable control characters or prohibited Unicode sequences.",
+                    row=row_num,
+                    column=department_col,
+                ))
+            elif not val_str or val_str.lower() in ("nan", "none", "null"):
                 all_warnings.append(ValidationError(
                     message="Missing Department value; will default to 'General'.",
                     row=row_num,
                     column=department_col,
                     severity="WARNING",
                 ))
+
+    # Error collection capping to prevent memory/UI exhaustion under adversarial payloads
+    if len(all_errors) > MAX_VALIDATION_ERRORS:
+        capped_errors = all_errors[:MAX_VALIDATION_ERRORS]
+        capped_errors.append(ValidationError(
+            message=f"Validation error limit reached ({MAX_VALIDATION_ERRORS} errors). Halting further validation display to prevent resource exhaustion."
+        ))
+        all_errors = capped_errors
 
     is_valid = len(all_errors) == 0
     return ValidationResult(

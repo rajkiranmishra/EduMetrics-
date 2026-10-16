@@ -188,7 +188,13 @@ def run_cli(args: argparse.Namespace) -> int:
     class_summary = compute_class_summary(df_evaluated)
     subject_metrics = compute_subject_analytics(df_evaluated, subject_configs, pass_thresh_arg)
     dept_summary = compute_department_summary(df_evaluated)
-    attention_students = identify_academic_attention_cases(df_evaluated, subject_configs, pass_thresh_arg)
+    attention_students = identify_academic_attention_cases(
+        df_evaluated,
+        subject_configs,
+        pass_thresh_arg,
+        aggregate_pass_threshold=policy.aggregate_pass_percentage,
+        attendance_warning_threshold=policy.attendance_warning_threshold,
+    )
     top_performers = get_top_performers(df_evaluated, n=args.top)
 
     # 7. Print Report

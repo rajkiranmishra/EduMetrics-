@@ -125,20 +125,24 @@ with st.sidebar:
         reset_session()
 
     st.markdown("---")
-    st.markdown("### 🔒 Privacy by Design")
+    st.markdown("### 🔒 Privacy & Operational Reality")
     st.caption(
-        "EduMetrics V1 operates in zero-login, session-ephemeral mode. "
-        "No student records are stored on disk or database. "
-        "Session data is processed in transient server memory scoped to the active user session."
+        "EduMetrics V1 processes data strictly in transient server-side memory. "
+        "The application does not intentionally persist datasets to disk or databases. "
+        "Streamlit session state is an ephemeral UI container, not an authenticated security boundary. "
+        "Resetting the session removes active references but cannot guarantee instant physical RAM erasure. "
+        "Please use fictional or anonymized student records only."
     )
 
 
 # Top Banner Privacy Notice
 st.markdown("""
 <div class="privacy-notice">
-    <strong>EduMetrics Privacy Notice:</strong> This demonstrator operates with transient server-side session memory. 
-    Uploaded student datasets are isolated to your active session and are <strong>never stored on persistent disk, saved to a database, or shared across users</strong>. 
-    Please use fictional or appropriately de-identified student data for testing.
+    <strong>EduMetrics Privacy Notice:</strong> Analysis occurs entirely in transient server-side memory scoped to your active session. 
+    The application does not intentionally persist uploaded student datasets to disk or databases. 
+    However, hosting providers may maintain operational memory/network logs, and browser sessions do not constitute an authenticated security boundary. 
+    Resetting the session removes active application references but cannot guarantee immediate physical RAM sanitization. 
+    <strong>Please upload fictional or properly de-identified / anonymized academic datasets only.</strong>
 </div>
 """, unsafe_allow_html=True)
 
@@ -528,14 +532,16 @@ with tabs[1]:
                     st.caption(f"Score Range: ≥ {min_val:.1f}% to < preceding tier")
             edited_boundaries.append(GradeBoundary(label=lbl, min_percentage=0.0 if is_lowest else min_val))
 
+        st.session_state.custom_boundaries = edited_boundaries
+
         btn1, btn2, _ = st.columns([1, 1, 2])
         with btn1:
             if st.button("➕ Add Grade Level", key=f"btn_add_tier_{fp}"):
-                if len(active_bounds) < 12:
-                    last = active_bounds[-1]
-                    prev_pct = active_bounds[-2].min_percentage if len(active_bounds) >= 2 else 50.0
+                if len(edited_boundaries) < 12:
+                    last = edited_boundaries[-1]
+                    prev_pct = edited_boundaries[-2].min_percentage if len(edited_boundaries) >= 2 else 50.0
                     new_pct = max(10.0, prev_pct - 10.0)
-                    st.session_state.custom_boundaries = list(active_bounds[:-1]) + [GradeBoundary(f"G{len(active_bounds)}", new_pct), last]
+                    st.session_state.custom_boundaries = list(edited_boundaries[:-1]) + [GradeBoundary(f"G{len(edited_boundaries)}", new_pct), last]
                     st.session_state.gb_version = gb_ver + 1
                     clear_analysis_results()
                     st.session_state.config_stale = True
@@ -544,8 +550,8 @@ with tabs[1]:
                     st.warning("Maximum of 12 grade levels reached.")
         with btn2:
             if st.button("➖ Remove Grade Level", key=f"btn_rem_tier_{fp}"):
-                if len(active_bounds) > 2:
-                    st.session_state.custom_boundaries = list(active_bounds[:-2]) + [active_bounds[-1]]
+                if len(edited_boundaries) > 2:
+                    st.session_state.custom_boundaries = list(edited_boundaries[:-2]) + [edited_boundaries[-1]]
                     st.session_state.gb_version = gb_ver + 1
                     clear_analysis_results()
                     st.session_state.config_stale = True
@@ -702,7 +708,13 @@ with tabs[1]:
                         pass_thresh_param = policy.subject_pass_overrides if policy.subject_pass_overrides else policy.subject_pass_percentage
                         summary = compute_class_summary(df_evaluated)
                         subj_metrics = compute_subject_analytics(df_evaluated, subject_configs, pass_thresh_param)
-                        attention_cases = identify_academic_attention_cases(df_evaluated, subject_configs, pass_thresh_param)
+                        attention_cases = identify_academic_attention_cases(
+                            df_evaluated,
+                            subject_configs,
+                            pass_thresh_param,
+                            aggregate_pass_threshold=policy.aggregate_pass_percentage,
+                            attendance_warning_threshold=policy.attendance_warning_threshold,
+                        )
 
                         # Store in session state
                         st.session_state.evaluated_df = df_evaluated

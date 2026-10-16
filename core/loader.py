@@ -8,7 +8,7 @@ Guarantees:
 5. Detection of duplicate column headers (including duplicates after whitespace trimming).
 6. Detection of empty or whitespace-only column headers.
 7. Support for multiline quoted fields and rejection of malformed quoted fields or inconsistent row lengths.
-8. Enforces computational bounds via security checks.
+8. Enforces computational bounds via security checks and cell-size constraints.
 """
 
 import io
@@ -20,6 +20,10 @@ from security.upload_checks import (
     check_file_size,
     is_safe_csv_content,
     check_csv_bounds,
+    sanitize_filename,
+    has_prohibited_characters,
+    MAX_HEADER_LENGTH,
+    MAX_RAW_CELL_LENGTH,
 )
 
 
@@ -56,15 +60,17 @@ def load_csv_from_bytes(
     Raises:
         IngestionError: If file violates size, safety, structure, or parsing constraints.
     """
+    clean_filename = sanitize_filename(filename)
+
     # 1. Byte-level size check
     size_ok, size_msg = check_file_size(file_bytes)
     if not size_ok:
-        raise IngestionError(f"File '{filename}' rejected: {size_msg}")
+        raise IngestionError(f"File '{clean_filename}' rejected: {size_msg}")
 
     # 2. Content safety check (reject binaries/null bytes)
     safe_ok, safe_msg = is_safe_csv_content(file_bytes)
     if not safe_ok:
-        raise IngestionError(f"File '{filename}' rejected: {safe_msg}")
+        raise IngestionError(f"File '{clean_filename}' rejected: {safe_msg}")
 
     # 3. Detect encoding
     encoding = detect_encoding(file_bytes)
@@ -73,19 +79,19 @@ def load_csv_from_bytes(
     try:
         sample_text = file_bytes.decode(encoding, errors="replace")
     except Exception as exc:
-        raise IngestionError(f"Failed to decode CSV '{filename}' using {encoding}: {str(exc)}") from exc
+        raise IngestionError(f"Failed to decode CSV '{clean_filename}' using {encoding}: {str(exc)}") from exc
 
     if not sample_text.strip():
-        raise IngestionError(f"File '{filename}' contains no readable content or is empty.")
+        raise IngestionError(f"File '{clean_filename}' contains no readable content or is empty.")
 
     try:
         csv_reader = csv.reader(io.StringIO(sample_text))
         first_row = next(csv_reader, None)
     except csv.Error as exc:
-        raise IngestionError(f"Malformed CSV structure in '{filename}': {str(exc)}") from exc
+        raise IngestionError(f"Malformed CSV structure in '{clean_filename}': {str(exc)}") from exc
 
     if first_row is None or len(first_row) == 0 or all(not str(c).strip() for c in first_row):
-        raise IngestionError(f"Uploaded CSV file '{filename}' has no header row.")
+        raise IngestionError(f"Uploaded CSV file '{clean_filename}' has no header row.")
 
     # Check for empty headers (e.g. "student_id,name,,Math")
     empty_header_positions = [i + 1 for i, c in enumerate(first_row) if not str(c).strip()]
@@ -94,6 +100,19 @@ def load_csv_from_bytes(
             f"Dataset contains empty or whitespace-only column header at column position(s) {empty_header_positions}. "
             f"All column headers must be non-empty strings."
         )
+
+    # Check header length and prohibited characters
+    for idx, raw_h in enumerate(first_row, start=1):
+        h_str = str(raw_h).strip()
+        if len(h_str) > MAX_HEADER_LENGTH:
+            raise IngestionError(
+                f"Column header at position {idx} exceeds maximum allowed length of "
+                f"{MAX_HEADER_LENGTH} characters ({len(h_str)} characters detected)."
+            )
+        if has_prohibited_characters(h_str):
+            raise IngestionError(
+                f"Column header '{h_str[:20]}...' contains unprintable control characters or prohibited Unicode sequences."
+            )
 
     # Check for duplicate headers after whitespace normalization
     norm_headers = [str(c).strip() for c in first_row]
@@ -110,7 +129,7 @@ def load_csv_from_bytes(
             f"All column headers must be distinct."
         )
 
-    # Validate row length consistency across all data rows
+    # Validate row length consistency and cell length bounds across all data rows
     expected_cols = len(first_row)
     try:
         for row_idx, row in enumerate(csv_reader, start=2):
@@ -118,13 +137,19 @@ def load_csv_from_bytes(
                 continue
             if len(row) != expected_cols:
                 raise IngestionError(
-                    f"Inconsistent row length in '{filename}' at row {row_idx}: "
+                    f"Inconsistent row length in '{clean_filename}' at row {row_idx}: "
                     f"expected {expected_cols} columns, found {len(row)}."
                 )
+            for col_idx, cell in enumerate(row, start=1):
+                if len(str(cell)) > MAX_RAW_CELL_LENGTH:
+                    raise IngestionError(
+                        f"Oversized CSV cell in '{clean_filename}' at row {row_idx}, column {col_idx}: "
+                        f"field length ({len(str(cell))}) exceeds the limit of {MAX_RAW_CELL_LENGTH} characters."
+                    )
     except IngestionError:
         raise
     except csv.Error as exc:
-        raise IngestionError(f"Malformed CSV data in '{filename}': {str(exc)}") from exc
+        raise IngestionError(f"Malformed CSV data in '{clean_filename}': {str(exc)}") from exc
 
     # 5. Parse CSV via Pandas
     try:
@@ -140,7 +165,7 @@ def load_csv_from_bytes(
     except IngestionError:
         raise
     except Exception as exc:
-        raise IngestionError(f"Failed to parse CSV '{filename}': {str(exc)}") from exc
+        raise IngestionError(f"Failed to parse CSV '{clean_filename}': {str(exc)}") from exc
 
     # Strip column names
     df_raw.columns = [str(c).strip() for c in df_raw.columns]
@@ -149,17 +174,18 @@ def load_csv_from_bytes(
     row_count, col_count = df_raw.shape
     bounds_ok, bounds_msg = check_csv_bounds(row_count, col_count)
     if not bounds_ok:
-        raise IngestionError(f"Dataset bounds violation in '{filename}': {bounds_msg}")
+        raise IngestionError(f"Dataset bounds violation in '{clean_filename}': {bounds_msg}")
 
     return df_raw, list(df_raw.columns)
 
 
 def load_csv_from_path(file_path: str) -> Tuple[pd.DataFrame, List[str]]:
     """Load and parse a CSV file directly from a filesystem path."""
+    clean_path = sanitize_filename(file_path)
     try:
         with open(file_path, "rb") as f:
             raw_bytes = f.read()
     except OSError as err:
-        raise IngestionError(f"Could not open file at '{file_path}': {err.strerror}") from err
+        raise IngestionError(f"Could not open file at '{clean_path}': {err.strerror}") from err
 
-    return load_csv_from_bytes(raw_bytes, filename=file_path)
+    return load_csv_from_bytes(raw_bytes, filename=clean_path)

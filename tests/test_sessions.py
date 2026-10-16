@@ -827,3 +827,28 @@ def test_apptest_institution_metadata_and_custom_preset_flow():
     assert any(g in ["O", "E", "A"] for g in eval_grades)
 
 
+def test_grade_boundary_editor_preserves_user_edits_on_add_tier():
+    """Verify that editing a grade boundary label/percentage and then adding a tier preserves edits."""
+    at = AppTest.from_file("app.py")
+    at.run()
+
+    # Load School sample dataset
+    at.button[0].click().run()
+    assert at.session_state["raw_df"] is not None
+
+    # Find the first grade label input and modify it to "Distinction"
+    label_input = [ti for ti in at.text_input if "Grade 1 Label" in ti.label][0]
+    label_input.set_value("Distinction").run()
+
+    # Now click "➕ Add Grade Level"
+    add_btn = [b for b in at.button if "Add Grade Level" in b.label][0]
+    add_btn.click().run()
+
+    assert not at.exception
+    # Verify that the edited label "Distinction" was preserved in custom_boundaries!
+    bounds = at.session_state["custom_boundaries"]
+    assert bounds[0].label == "Distinction"
+    # And that a new tier was added
+    assert len(bounds) == 8  # Default EduMetrics has 7 tiers, +1 tier = 8
+
+

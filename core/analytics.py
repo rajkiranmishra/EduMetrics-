@@ -255,14 +255,16 @@ def identify_academic_attention_cases(
     df_evaluated: pd.DataFrame,
     subject_configs: Dict[str, float],
     pass_percentage_threshold: Union[float, Dict[str, float]] = 40.0,
+    aggregate_pass_threshold: float = 40.0,
+    attendance_warning_threshold: float = 75.0,
 ) -> List[AcademicAttentionStudent]:
     """Identify students requiring targeted academic support via transparent rules.
 
     Indicators:
     1. CONCEPTUAL_SUPPORT_NEEDED: Attendance >= 85% and Percentage < 50%.
-    2. CHRONIC_ABSENTEEISM_CRITICAL: Attendance < 75% and Percentage < 50%.
+    2. CHRONIC_ABSENTEEISM_CRITICAL: Attendance < attendance_warning_threshold (default: 75%) and Percentage < 50%.
     3. SUBJECT_SPECIFIC_OUTLIER: Failed in exactly 1 subject, while other subjects average >= 65%.
-    4. BORDERLINE_AT_RISK: Status is PASS, but 40.0% <= Percentage < 45.0%.
+    4. BORDERLINE_AT_RISK: Status is PASS, but aggregate_pass_threshold <= Percentage < (aggregate_pass_threshold + 5.0).
     """
     flagged: List[AcademicAttentionStudent] = []
 
@@ -290,7 +292,7 @@ def identify_academic_attention_cases(
             continue
 
         # Rule 2: Low Attendance and Low Score
-        if att < 75.0 and pct < 50.0:
+        if att < attendance_warning_threshold and pct < 50.0:
             flagged.append(AcademicAttentionStudent(
                 student_id=sid,
                 student_name=sname,
@@ -298,7 +300,7 @@ def identify_academic_attention_cases(
                 percentage=display_pct,
                 attendance=att,
                 category="Critical Intervention (Attendance & Academic)",
-                rationale="Chronic absenteeism (<75%) compounded by failing academic performance (<50%).",
+                rationale=f"Chronic absenteeism (<{attendance_warning_threshold:.1f}%) compounded by failing academic performance (<50%).",
                 action_item="Initiate student counseling and parent/guardian attendance review.",
             ))
             continue
@@ -337,7 +339,8 @@ def identify_academic_attention_cases(
                 continue
 
         # Rule 4: Borderline Passing (At-Risk)
-        if status == "PASS" and is_greater_or_close(pct, 40.0) and pct < 45.0:
+        borderline_upper = aggregate_pass_threshold + 5.0
+        if status == "PASS" and is_greater_or_close(pct, aggregate_pass_threshold) and pct < borderline_upper:
             flagged.append(AcademicAttentionStudent(
                 student_id=sid,
                 student_name=sname,
@@ -345,7 +348,7 @@ def identify_academic_attention_cases(
                 percentage=display_pct,
                 attendance=att,
                 category="Borderline / At-Risk",
-                rationale="Passed, but within 5 percentage points of failing threshold (40.0%).",
+                rationale=f"Passed, but within 5 percentage points of failing threshold ({aggregate_pass_threshold:.1f}%).",
                 action_item="Monitor weekly progress to prevent regression into failure.",
             ))
 

@@ -4,7 +4,7 @@
 [![EduMetrics CI](https://github.com/rajkiranmishra/edumetrics/actions/workflows/ci.yml/badge.svg)](https://github.com/rajkiranmishra/edumetrics/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://www.python.org/)
-[![Tests: 116 Passed](https://img.shields.io/badge/Tests-116%20Passed-success.svg)](docs/TEST_REPORT.md)
+[![Tests: 125 Passed](https://img.shields.io/badge/Tests-125%20Passed-success.svg)](docs/TEST_REPORT.md)
 
 **EduMetrics** is a production-minded academic analytics platform that empowers teachers, professors, and academic coordinators to validate student performance datasets, configure institutional grading policies, compute statistical cohort distributions, and export sanitized reports without requiring spreadsheet programming.
 
@@ -239,16 +239,20 @@ If a student fails any single subject, their overall status is `FAIL` with diagn
 
 ## 🔒 Security & Privacy Controls
 
-- **CWE-1236 Formula Injection Defense:** All exported text cells starting with `=`, `+`, `-`, `@`, `\t`, or `\r` are neutralized by prepending a single quote (`'`), protecting educators opening files in Microsoft Excel or Apple Numbers.
-- **Resource Limits:** Hard caps of 2 MB file size, 5,000 rows, and 30 columns prevent memory exhaustion DoS attacks.
-- **Binary Rejection:** Null bytes and binary executable magic headers are rejected before parsing.
-- **Zero Disk Retention:** Uploaded student data lives strictly within volatile session memory.
+- **CWE-1236 Formula Injection Defense:** All exported text cells starting with `=`, `+`, `-`, `@`, `\t`, `\r`, or `%` (including leading whitespace bypasses like `"   =1+1"`) are neutralized by prepending a single quote (`'`), protecting educators opening files in Microsoft Excel, Apple Numbers, LibreOffice Calc, or Google Sheets.
+- **Multi-Layer Ingestion Bounds:** Enforces a 2 MB file size limit, 5,000 maximum rows, 30 maximum columns, 512-character maximum individual cell length, and 64-character maximum header length.
+- **Identifier Length Limits:** Enforces strict field bounds: Student ID ($\le 64$), Student Name ($\le 128$), and Department ($\le 64$).
+- **Adversarial Filename Sanitization:** Path traversal sequences (`../`, `..\`), null bytes, control characters, and HTML tags are stripped from filenames.
+- **Unicode & Control Character Defenses:** Prohibits dangerous bidirectional override characters (`\u202e` etc.) and unprintable control characters to prevent visual spoofing.
+- **Validation Error Capping:** Capped at 500 errors to prevent memory exhaustion and browser UI rendering denial of service.
+- **Transient In-Memory Processing:** Analysis executes strictly in transient server-side memory; EduMetrics V1 does not intentionally persist datasets to disk or databases.
+- **Fictional Data Requirement:** Users are explicitly instructed to upload fictional or anonymized academic records only.
 
 ---
 
 ## 🧪 Automated Testing
 
-EduMetrics includes a comprehensive test suite of **116 automated tests** covering all modules:
+EduMetrics includes a comprehensive test suite of **125 automated tests** covering all modules:
 
 ```bash
 pytest -v
@@ -256,17 +260,17 @@ pytest -v
 
 ```
 ============================== test session starts ==============================
-collected 116 items
+collected 125 items
 
-tests/test_analytics.py .......                                           [  6%]
-tests/test_grading.py ..............................................      [ 45%]
-tests/test_loader.py .............                                        [ 56%]
-tests/test_reports.py ..                                                  [ 58%]
-tests/test_security.py .....                                              [ 62%]
-tests/test_sessions.py ............................                       [ 87%]
+tests/test_analytics.py .......                                           [  5%]
+tests/test_grading.py ..............................................      [ 42%]
+tests/test_loader.py .............                                        [ 52%]
+tests/test_reports.py ..                                                  [ 54%]
+tests/test_security.py .............                                      [ 64%]
+tests/test_sessions.py .............................                      [ 88%]
 tests/test_validation.py ...............                                  [100%]
 
-============================== 116 passed in 1.85s ==============================
+============================== 125 passed in 2.71s ==============================
 ```
 
 ---

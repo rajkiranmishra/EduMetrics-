@@ -569,3 +569,151 @@ def test_concurrent_session_isolation():
             assert res["pass_rate"] == 60.0
             assert res["avg_pct"] == 41.6
             assert all(sid.startswith("U2_") for sid in res["student_ids"])
+
+
+# =============================================================================
+# 4. ADDITIONAL HARDENING AND EDGE-CASE TESTS
+# =============================================================================
+
+def test_same_file_uploaded_repeatedly_preserves_analysis():
+    """Verify that uploading the exact same file content repeatedly preserves valid analysis."""
+    content = b"student_id,student_name,attendance,Math\nS01,Alice,95.0,90.0\n"
+    file_obj = _make_mock_file("same_data.csv", content)
+
+    with patch("streamlit.file_uploader", return_value=file_obj):
+        at = AppTest.from_file("app.py")
+        at.run()
+        run_btn = [b for b in at.button if "Run Academic Analysis" in b.label][0]
+        run_btn.click().run()
+        assert at.session_state["evaluated_df"] is not None
+
+        # Rerun with the exact same file in uploader
+        at.run()
+        assert not at.exception
+        assert at.session_state["evaluated_df"] is not None
+        assert at.session_state["dataset_name"] == "same_data.csv"
+
+
+def test_invalid_upload_followed_by_valid_upload():
+    """Verify recovering from a rejected upload by submitting a valid CSV cleanly resets state."""
+    invalid_content = b"header1,header1\nval1,val2\n"  # duplicate headers
+    invalid_file = _make_mock_file("invalid.csv", invalid_content)
+
+    valid_content = b"student_id,student_name,attendance,Math\nS01,Alice,95.0,90.0\n"
+    valid_file = _make_mock_file("valid.csv", valid_content)
+
+    current_file = invalid_file
+
+    def mock_uploader(*args, **kwargs):
+        return current_file
+
+    with patch("streamlit.file_uploader", side_effect=mock_uploader):
+        at = AppTest.from_file("app.py")
+        at.run()
+        assert at.session_state["upload_error"] is not None
+        assert at.session_state["raw_df"] is None
+        assert at.session_state["evaluated_df"] is None
+
+        # Now user fixes the file and uploads valid CSV
+        current_file = valid_file
+        at.run()
+        assert not at.exception
+        assert at.session_state["upload_error"] is None
+        assert at.session_state["raw_df"] is not None
+        assert len(at.session_state["raw_df"]) == 1
+
+        # User runs analysis
+        run_btn = [b for b in at.button if "Run Academic Analysis" in b.label][0]
+        run_btn.click().run()
+        assert at.session_state["evaluated_df"] is not None
+
+
+def test_reset_button_after_failed_upload():
+    """Verify reset button clears error state and resets workflow after a failed upload."""
+    invalid_content = b"bad,csv,format\n"
+    invalid_file = _make_mock_file("bad.csv", invalid_content)
+
+    def mock_uploader(*args, **kwargs):
+        # Return bad file initially, return None after uploader_key increments on reset
+        if kwargs.get("key") == "csv_uploader_0":
+            return invalid_file
+        return None
+
+    with patch("streamlit.file_uploader", side_effect=mock_uploader):
+        at = AppTest.from_file("app.py")
+        at.run()
+        assert at.session_state["upload_error"] is not None
+
+        # Click Reset in sidebar
+        reset_btn = [b for b in at.sidebar.button if "Reset" in b.label][0]
+        reset_btn.click().run()
+
+        assert not at.exception
+        assert at.session_state["upload_error"] is None
+        assert at.session_state["raw_df"] is None
+        assert at.session_state["evaluated_df"] is None
+
+
+def test_consecutive_grading_threshold_changes_and_reanalysis():
+    """Verify modifying multiple institutional policy settings consecutively and re-evaluating."""
+    at = AppTest.from_file("app.py")
+    at.run()
+    # Load school sample
+    at.button[0].click().run()
+    run_btn = [b for b in at.button if "Run Academic Analysis" in b.label][0]
+    run_btn.click().run()
+    assert at.session_state["evaluated_df"] is not None
+
+    # Change 1: Subject passing threshold to 50
+    ni_subj = [ni for ni in at.number_input if "Subject Passing Threshold" in ni.label][0]
+    ni_subj.set_value(50.0).run()
+    assert at.session_state["evaluated_df"] is None
+    assert at.session_state["config_stale"] is True
+
+    # Change 2: Aggregate passing threshold to 60
+    ni_agg = [ni for ni in at.number_input if "Aggregate Passing Threshold" in ni.label][0]
+    ni_agg.set_value(60.0).run()
+    assert at.session_state["evaluated_df"] is None
+    assert at.session_state["config_stale"] is True
+
+    # Change 3: Attendance warning cutoff to 80
+    ni_att = [ni for ni in at.number_input if "Attendance Warning Cutoff" in ni.label][0]
+    ni_att.set_value(80.0).run()
+    assert at.session_state["evaluated_df"] is None
+    assert at.session_state["config_stale"] is True
+
+    # Re-run analysis
+    run_btn = [b for b in at.button if "Run Academic Analysis" in b.label][0]
+    run_btn.click().run()
+
+    assert not at.exception
+    assert at.session_state["evaluated_df"] is not None
+    assert at.session_state["config_stale"] is False
+    assert at.session_state["policy"].subject_pass_percentage == 50.0
+    assert at.session_state["policy"].aggregate_pass_percentage == 60.0
+    assert at.session_state["policy"].attendance_warning_threshold == 80.0
+
+
+def test_widget_state_isolation_across_dataset_swaps():
+    """Verify switching between datasets isolates column mappings and subject settings cleanly."""
+    at = AppTest.from_file("app.py")
+    at.run()
+
+    # Load School (uniform 100-mark format)
+    at.button[0].click().run()
+    school_subjs = at.multiselect[0].value
+    assert "English" in school_subjs
+    assert "Mathematics" in school_subjs
+
+    # Load College (heterogeneous marks with labs)
+    at.button[1].click().run()
+    college_subjs = at.multiselect[0].value
+    assert "Data_Structures" in college_subjs
+    assert "Database_Lab" in college_subjs
+    assert "English" not in college_subjs
+
+    # Switch back to School
+    at.button[0].click().run()
+    reloaded_school_subjs = at.multiselect[0].value
+    assert "English" in reloaded_school_subjs
+    assert "Database_Lab" not in reloaded_school_subjs

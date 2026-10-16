@@ -103,34 +103,34 @@ with st.sidebar:
         st.success(f"Active Dataset: **{st.session_state.dataset_name}**")
         st.write(f"📊 Records: **{len(st.session_state.evaluated_df)}**")
         st.write(f"📈 Pass Rate: **{st.session_state.class_summary.overall_pass_percentage:.1f}%**")
-        st.markdown("---")
-        if st.button("🔄 Start New Analysis / Reset", use_container_width=True):
-            reset_session()
     elif st.session_state.raw_df is not None:
         st.info(f"Loaded Dataset: **{st.session_state.dataset_name}**")
         st.write(f"📊 Records: **{len(st.session_state.raw_df)}**")
         st.caption("⚙️ Configure settings and click 'Run Academic Analysis' to view metrics.")
-        st.markdown("---")
-        if st.button("🔄 Start New Analysis / Reset", use_container_width=True):
-            reset_session()
+    elif st.session_state.upload_error is not None:
+        st.error("Upload error detected.")
     else:
         st.info("No active dataset loaded. Please upload a CSV to begin.")
+
+    st.markdown("---")
+    if st.button("🔄 Start New Analysis / Reset", use_container_width=True):
+        reset_session()
 
     st.markdown("---")
     st.markdown("### 🔒 Privacy by Design")
     st.caption(
         "EduMetrics V1 operates in zero-login, session-ephemeral mode. "
         "No student records are stored on disk or database. "
-        "Session data is held in memory for the active user session only."
+        "Session data is processed in transient server memory scoped to the active user session."
     )
 
 
 # Top Banner Privacy Notice
 st.markdown("""
 <div class="privacy-notice">
-    <strong>EduMetrics Privacy Notice:</strong> This public demonstrator operates entirely in transient memory. 
-    Uploaded student datasets are processed in your browser's private session and are <strong>never written to a database or shared across users</strong>. 
-    Please use fictional or appropriately de-identified student data for public testing.
+    <strong>EduMetrics Privacy Notice:</strong> This demonstrator operates with transient server-side session memory. 
+    Uploaded student datasets are isolated to your active session and are <strong>never stored on persistent disk, saved to a database, or shared across users</strong>. 
+    Please use fictional or appropriately de-identified student data for testing.
 </div>
 """, unsafe_allow_html=True)
 
@@ -720,5 +720,5 @@ with tabs[7]:
     EduMetrics defuses all such strings upon export by prepending a single quote (`'`), ensuring spreadsheet applications display the text literally without execution.
 
     ### 4. Ephemeral Zero-Storage Privacy Architecture
-    EduMetrics V1 does not write records to a database, disk, or remote storage. All data exists exclusively inside transient browser session memory and is released when the session closes.
+    EduMetrics V1 does not persist records to a database, persistent disk, or remote storage. Uploaded data is processed in transient server memory scoped to the active user session. Active session references are cleared on reset or session termination, allowing memory to be reclaimed by runtime garbage collection.
     """)

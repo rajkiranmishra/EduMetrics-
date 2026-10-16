@@ -84,6 +84,10 @@ def replace_active_dataset(
     s["upload_error"] = None
     s["config_stale"] = False
     s["subject_configs"] = {}
+    # Clean up any lingering widget keys from previous datasets
+    for k in list(s.keys()):
+        if any(k.startswith(prefix) for prefix in ("col_", "sel_subjs_", "max_m_", "pol_")):
+            del s[k]
 
 
 def handle_failed_upload(
@@ -100,6 +104,10 @@ def handle_failed_upload(
     s["subject_configs"] = {}
     s["upload_error"] = error_message
     s["config_stale"] = False
+    # Clean up lingering widget keys
+    for k in list(s.keys()):
+        if any(k.startswith(prefix) for prefix in ("col_", "sel_subjs_", "max_m_", "pol_")):
+            del s[k]
 
 
 def clear_removed_upload(state: Optional[MutableMapping] = None) -> None:

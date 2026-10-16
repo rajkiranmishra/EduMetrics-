@@ -4,22 +4,48 @@ Implements:
 1. Heterogeneous subject weight normalization:
    Percentage = (Total Marks Obtained / Total Maximum Possible Marks) * 100
 2. Configurable grade boundaries with monotonicity and finiteness validation.
-3. Independent subject-level and aggregate-level pass/fail evaluation.
-4. Attendance shortage threshold flagging.
-5. Actionable failure diagnostics distinguishing explicit absence from low scores.
-6. Exact grade boundary and passing threshold preservation without floating point artifacts.
+3. Full numerical precision evaluation separating calculation percentage from display percentage.
+4. Independent subject-level and aggregate-level pass/fail evaluation.
+5. Exact boundary and passing threshold preservation without premature rounding.
+6. Fail-safe input validation on direct invocation without silent coercion.
+7. Attendance shortage threshold flagging.
+8. Actionable failure diagnostics distinguishing explicit absence from low scores.
 """
 
 import math
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Tuple, Set
+from typing import List, Dict, Optional, Tuple, Set, Any
 import pandas as pd
 import numpy as np
 
 
 class PolicyConfigurationError(Exception):
-    """Raised when an academic grading policy has invalid boundaries or thresholds."""
+    """Raised when an academic grading policy or evaluation configuration is invalid."""
     pass
+
+
+# Machine precision comparison tolerance for IEEE 754 floating-point representations.
+# Defends exact mathematical boundaries against binary representation artifacts (e.g. 39.99999999999999 vs 40.0)
+# while strictly rejecting genuinely below-threshold scores (such as 39.996% or 79.999%).
+MACHINE_EPSILON_TOLERANCE: float = 1e-12
+
+SUPPORTED_ABSENCE_CODES: Set[str] = {"ABS", "ABSENT"}
+
+
+def is_greater_or_close(val: float, threshold: float, tol: float = MACHINE_EPSILON_TOLERANCE) -> bool:
+    """Evaluate whether val >= threshold using full numerical precision with float artifact protection.
+
+    Parameters:
+        val: The calculated percentage or score value.
+        threshold: The target boundary or pass threshold.
+        tol: Absolute and relative comparison tolerance (default 1e-12).
+
+    Returns:
+        True if val >= threshold or mathematically equivalent within machine epsilon.
+    """
+    if val >= threshold:
+        return True
+    return math.isclose(val, threshold, rel_tol=tol, abs_tol=tol)
 
 
 @dataclass(frozen=True)
@@ -95,14 +121,22 @@ class GradingPolicy:
 
 
 def assign_grade_to_percentage(percentage: float, boundaries: List[GradeBoundary]) -> str:
-    """Map a percentage score to a letter grade based on ordered boundaries."""
+    """Map a percentage score to a letter grade based on ordered boundaries using full precision.
+
+    Parameters:
+        percentage: Unrounded percentage score (or display score).
+        boundaries: List of GradeBoundary objects in strictly descending order.
+
+    Returns:
+        Letter grade label.
+    """
     if not isinstance(percentage, (int, float)) or not math.isfinite(percentage):
         raise ValueError(f"Percentage must be a finite number, got {percentage}.")
 
     # Defensively clamp percentage for grading lookup
     clamped_pct = max(0.0, min(100.0, float(percentage)))
     for boundary in boundaries:
-        if clamped_pct >= boundary.min_percentage:
+        if is_greater_or_close(clamped_pct, boundary.min_percentage):
             return boundary.label
     return boundaries[-1].label
 
@@ -118,10 +152,24 @@ def evaluate_students(
 ) -> pd.DataFrame:
     """Calculate totals, normalized percentages, grades, pass/fail status, and diagnostics.
 
+    Guarantees:
+    1. Input DataFrame is never mutated.
+    2. Full numerical precision is preserved for grade assignments, subject passing,
+       aggregate passing, and ranking.
+    3. Premature rounding is prevented: rounded percentages are reserved solely for display.
+    4. Fail-safe input validation rejects missing, non-numeric, non-finite, negative, or
+       exceeding marks, invalid attendance, and missing student IDs/names with descriptive errors.
+    5. Documented absence markers ('ABS', 'ABSENT') are preserved and evaluated as 0.0 marks.
+
     Returns:
         New DataFrame with standardized student performance columns.
     """
+    if not isinstance(policy, GradingPolicy):
+        raise PolicyConfigurationError(f"policy must be an instance of GradingPolicy, got {type(policy)}.")
     policy.validate()
+
+    if not isinstance(df, pd.DataFrame):
+        raise TypeError(f"df must be a pandas DataFrame, got {type(df)}.")
 
     # Verify structural columns exist in DataFrame
     required_cols = [
@@ -130,6 +178,8 @@ def evaluate_students(
         (attendance_col, "Attendance"),
     ]
     for col_name, col_role in required_cols:
+        if not col_name or not isinstance(col_name, str):
+            raise PolicyConfigurationError(f"Invalid column name for {col_role}: {col_name!r}")
         if col_name not in df.columns:
             raise PolicyConfigurationError(f"{col_role} column '{col_name}' not found in DataFrame.")
 
@@ -152,72 +202,130 @@ def evaluate_students(
         return pd.DataFrame(columns=[
             "student_id", "student_name", "department", "attendance",
             *subject_configs.keys(),
-            "total_marks", "max_marks", "average_marks", "percentage",
+            "total_marks", "max_marks", "average_marks",
+            "percentage", "raw_percentage",
             "grade", "status", "failed_subject_count", "absent_subject_count",
             "absent_subjects", "failure_reason", "attendance_warning",
         ])
 
     evaluated_records = []
 
-    for _, row in df.iterrows():
-        sid = str(row[student_id_col]).strip()
-        sname = str(row[name_col]).strip()
+    for idx, row in df.iterrows():
+        row_num = idx + 2  # 1-indexed, accounting for header row
+
+        # 1. Validate mandatory Student ID
+        val_id = row[student_id_col]
+        if val_id is None or pd.isna(val_id):
+            raise ValueError(f"Missing mandatory Student ID at row {row_num}.")
+        sid = str(val_id).strip()
+        if not sid or sid.lower() in ("nan", "none", "null"):
+            raise ValueError(f"Missing mandatory Student ID at row {row_num}.")
+
+        # 2. Validate mandatory Student Name
+        val_name = row[name_col]
+        if val_name is None or pd.isna(val_name):
+            raise ValueError(f"Missing mandatory Student Name at row {row_num} (Student ID '{sid}').")
+        sname = str(val_name).strip()
+        if not sname or sname.lower() in ("nan", "none", "null"):
+            raise ValueError(f"Missing mandatory Student Name at row {row_num} (Student ID '{sid}').")
+
+        # 3. Department (optional)
         dept = (
             str(row[department_col]).strip()
             if (department_col and department_col in df.columns and str(row[department_col]).strip().lower() not in ("", "nan", "none", "null"))
             else "General"
         )
 
-        # Clean attendance
-        att_raw = str(row[attendance_col]).strip().rstrip("%")
+        # 4. Validate Attendance: must be present, finite, and in [0.0, 100.0]
+        val_att = row[attendance_col]
+        if val_att is None or pd.isna(val_att):
+            raise ValueError(f"Missing mandatory Attendance value at row {row_num} (Student '{sid}').")
+        att_raw = str(val_att).strip().rstrip("%")
+        if not att_raw or att_raw.lower() in ("nan", "none", "null", "inf", "-inf", "+inf", "infinity", "-infinity", "+infinity"):
+            raise ValueError(f"Invalid non-finite or empty Attendance '{val_att}' at row {row_num} (Student '{sid}').")
         try:
-            att_num = float(att_raw) if att_raw else 0.0
-            att_val = att_num if math.isfinite(att_num) else 0.0
+            att_num = float(att_raw)
         except (ValueError, TypeError):
-            att_val = 0.0
+            raise ValueError(f"Non-numeric Attendance '{val_att}' at row {row_num} (Student '{sid}').")
+        if not math.isfinite(att_num):
+            raise ValueError(f"Non-finite Attendance '{val_att}' at row {row_num} (Student '{sid}').")
+        if not (0.0 <= att_num <= 100.0):
+            raise ValueError(
+                f"Attendance {att_num}% out of valid range [0.0, 100.0] at row {row_num} (Student '{sid}')."
+            )
+        att_val = float(att_num)
 
-        # Calculate subject scores and pass/fail
+        # 5. Validate and calculate Subject scores
         subj_obtained = {}
         failed_subjects = []
         absent_subjects = []
         total_obtained = 0.0
 
         for subj, max_m in subject_configs.items():
-            val_str = str(row[subj]).strip()
-            is_absent = val_str.upper() in ("ABS", "ABSENT")
+            val_subj = row[subj]
+            if val_subj is None or pd.isna(val_subj):
+                raise ValueError(
+                    f"Missing mark for subject '{subj}' at row {row_num} (Student '{sid}')."
+                )
+            val_str = str(val_subj).strip()
+            if not val_str or val_str.lower() in ("nan", "none", "null"):
+                raise ValueError(
+                    f"Missing mark for subject '{subj}' at row {row_num} (Student '{sid}')."
+                )
 
-            if is_absent:
+            # Check explicit documented absence markers
+            if val_str.upper() in SUPPORTED_ABSENCE_CODES:
                 score = 0.0
+                is_absent = True
                 absent_subjects.append(subj)
             else:
+                if val_str.lower() in ("inf", "-inf", "+inf", "infinity", "-infinity", "+infinity"):
+                    raise ValueError(
+                        f"Non-finite mark '{val_subj}' for subject '{subj}' at row {row_num} (Student '{sid}')."
+                    )
                 try:
                     s_num = float(val_str)
-                    score = s_num if math.isfinite(s_num) else 0.0
                 except (ValueError, TypeError):
-                    score = 0.0
+                    raise ValueError(
+                        f"Non-numeric mark '{val_subj}' for subject '{subj}' at row {row_num} (Student '{sid}')."
+                    )
+                if not math.isfinite(s_num):
+                    raise ValueError(
+                        f"Non-finite mark '{val_subj}' for subject '{subj}' at row {row_num} (Student '{sid}')."
+                    )
+                if s_num < 0.0:
+                    raise ValueError(
+                        f"Negative mark {s_num} for subject '{subj}' at row {row_num} (Student '{sid}')."
+                    )
+                if s_num > max_m:
+                    raise ValueError(
+                        f"Mark {s_num} exceeds maximum possible marks ({max_m}) for subject '{subj}' at row {row_num} (Student '{sid}')."
+                    )
+                score = float(s_num)
+                is_absent = False
 
             subj_obtained[subj] = score
             total_obtained += score
 
-            # Check individual subject pass threshold (defend against floating-point epsilon)
-            subj_pct = round((score / max_m) * 100.0, 4) if max_m > 0 else 0.0
-            if subj_pct < policy.subject_pass_percentage:
+            # Subject-level pass evaluation using full precision:
+            raw_subj_pct = (score / max_m) * 100.0 if max_m > 0 else 0.0
+            if not is_greater_or_close(raw_subj_pct, policy.subject_pass_percentage):
                 if is_absent:
                     failed_subjects.append(f"{subj} (ABSENT/{max_m:.0f})")
                 else:
                     failed_subjects.append(f"{subj} ({score:.1f}/{max_m:.0f})")
 
-        # Proportional percentage calculation
+        # Proportional percentage calculation using full precision
         raw_percentage = (total_obtained / total_possible_marks) * 100.0
-        # Prevent floating-point epsilon artifacts from unfairly failing an exact pass threshold
-        percentage = round(raw_percentage, 2)
+        # Display percentage (rounded to 2 decimal places strictly for presentation)
+        display_percentage = round(raw_percentage, 2)
         average_mark = round(total_obtained / len(subject_configs), 2)
 
-        # Grade assignment
-        grade = assign_grade_to_percentage(percentage, policy.grade_boundaries)
+        # Grade assignment using full available numerical precision (raw_percentage):
+        grade = assign_grade_to_percentage(raw_percentage, policy.grade_boundaries)
 
-        # Pass / Fail evaluation (exact thresholds honored)
-        agg_pass = (percentage >= policy.aggregate_pass_percentage) or (raw_percentage >= policy.aggregate_pass_percentage)
+        # Aggregate pass/fail evaluation using full available precision (raw_percentage):
+        agg_pass = is_greater_or_close(raw_percentage, policy.aggregate_pass_percentage)
         subj_pass = len(failed_subjects) == 0
 
         is_passed = agg_pass and subj_pass
@@ -229,8 +337,9 @@ def evaluate_students(
         if not subj_pass:
             reasons.append(f"Failed in: {', '.join(failed_subjects)}")
         if not agg_pass:
+            pct_display = f"{raw_percentage:.3f}".rstrip("0").rstrip(".") if raw_percentage < policy.aggregate_pass_percentage else f"{raw_percentage:.2f}"
             reasons.append(
-                f"Overall percentage {percentage:.1f}% below required {policy.aggregate_pass_percentage:.1f}%"
+                f"Overall percentage {pct_display}% below required {policy.aggregate_pass_percentage:.1f}%"
             )
         failure_reason = " | ".join(reasons) if reasons else "None"
 
@@ -245,7 +354,8 @@ def evaluate_students(
             "total_marks": round(total_obtained, 2),
             "max_marks": round(total_possible_marks, 2),
             "average_marks": average_mark,
-            "percentage": percentage,
+            "percentage": display_percentage,
+            "raw_percentage": raw_percentage,
             "grade": grade,
             "status": status,
             "failed_subject_count": len(failed_subjects),

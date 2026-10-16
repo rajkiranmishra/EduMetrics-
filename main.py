@@ -13,7 +13,7 @@ import pandas as pd
 
 from core.loader import load_csv_from_path, IngestionError
 from core.validation import validate_dataset
-from core.grading import GradingPolicy, GradeBoundary, evaluate_students
+from core.grading import GradingPolicy, GradeBoundary, evaluate_students, PolicyConfigurationError
 from core.analytics import (
     compute_class_summary,
     compute_subject_analytics,
@@ -118,15 +118,19 @@ def run_cli(args: argparse.Namespace) -> int:
 
     # 5. Evaluate student performance
     print("[*] Computing normalized scores, grades, and pass/fail statuses...")
-    df_evaluated = evaluate_students(
-        df=df_raw,
-        student_id_col=args.id_col,
-        name_col=args.name_col,
-        attendance_col=args.attendance_col,
-        subject_configs=subject_configs,
-        policy=policy,
-        department_col=args.dept_col if args.dept_col in df_raw.columns else None,
-    )
+    try:
+        df_evaluated = evaluate_students(
+            df=df_raw,
+            student_id_col=args.id_col,
+            name_col=args.name_col,
+            attendance_col=args.attendance_col,
+            subject_configs=subject_configs,
+            policy=policy,
+            department_col=args.dept_col if args.dept_col in df_raw.columns else None,
+        )
+    except (PolicyConfigurationError, ValueError) as err:
+        print(f"\n[EVALUATION ERROR] {err}")
+        return 1
 
     # 6. Analytics
     class_summary = compute_class_summary(df_evaluated)

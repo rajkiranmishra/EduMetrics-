@@ -484,6 +484,8 @@ with tabs[1]:
                         st.success("✅ Analysis successfully computed! View the results across the tabs above.")
                     except PolicyConfigurationError as p_err:
                         st.error(f"⚠️ Policy Configuration Error: {p_err}")
+                    except ValueError as v_err:
+                        st.error(f"⚠️ Academic Evaluation Error: {v_err}")
 
 
 # -----------------------------------------------------------------------------

@@ -1,10 +1,10 @@
 # Automated Test Execution & Quality Assurance Report
 ## EduMetrics — Academic Performance Analytics Platform
 
-**Document Version:** 1.0.0  
-**Date of Execution:** 14 October 2026  
+**Document Version:** 1.3.0  
+**Date of Execution:** 16 October 2026  
 **Test Framework:** `pytest 8.4.2` / `Python 3.9.6` / `macOS Darwin ARM64`  
-**Overall Status:** PASSED (31 of 31 tests passing, 100% success rate)  
+**Overall Status:** PASSED (101 of 101 tests passing, 100% success rate)  
 
 ---
 
@@ -12,80 +12,88 @@
 
 | Test Suite | File | Tests Run | Passed | Failed | Execution Time |
 | :--- | :--- | :---: | :---: | :---: | :---: |
-| **Loader & Ingestion** | `tests/test_loader.py` | 6 | 6 | 0 | 0.01s |
-| **Academic Validation** | `tests/test_validation.py` | 6 | 6 | 0 | 0.01s |
-| **Grading & Policy** | `tests/test_grading.py` | 6 | 6 | 0 | 0.01s |
-| **Statistical Analytics** | `tests/test_analytics.py` | 5 | 5 | 0 | 0.01s |
-| **Reporting & Formatting** | `tests/test_reports.py` | 2 | 2 | 0 | 0.01s |
-| **Security & Sanitization**| `tests/test_security.py` | 5 | 5 | 0 | 0.01s |
-| **Session Isolation** | `tests/test_sessions.py` | 1 | 1 | 0 | 0.01s |
-| **TOTAL** | | **31** | **31** | **0** | **0.06s** |
+| **Loader & Ingestion** | `tests/test_loader.py` | 13 | 13 | 0 | 0.05s |
+| **Academic Validation** | `tests/test_validation.py` | 15 | 15 | 0 | 0.08s |
+| **Grading, Precision & Policy** | `tests/test_grading.py` | 33 | 33 | 0 | 0.12s |
+| **Statistical Analytics** | `tests/test_analytics.py` | 7 | 7 | 0 | 0.03s |
+| **Reporting & Formatting** | `tests/test_reports.py` | 2 | 2 | 0 | 0.02s |
+| **Security & Sanitization**| `tests/test_security.py` | 5 | 5 | 0 | 0.02s |
+| **Session Isolation & State** | `tests/test_sessions.py` | 26 | 26 | 0 | 1.30s |
+| **TOTAL** | | **101** | **101** | **0** | **1.62s** |
 
 ---
 
 ## 2. Test Execution Details by Suite
 
 ### 2.1 Ingestion & Loader (`tests/test_loader.py`)
-- `test_sample_datasets_load_successfully`: Verified `data/sample_school.csv` (20 rows) and `data/sample_college.csv` (25 rows) load with correct column structures.
-- `test_leading_zero_preservation`: Verified student ID `"001"` remains string length 3 and is not converted to integer `1`.
-- `test_duplicate_column_headers_rejected`: Verified raw CSV duplicate headers raise `IngestionError`.
-- `test_empty_file_rejected`: Verified 0-byte upload raises `IngestionError`.
-- `test_encoding_detection`: Verified UTF-8, UTF-8-BOM, and Latin-1 accented characters ("Renée") decode cleanly.
-- `test_missing_file_raises_ingestion_error`: Verified clean error handling when a non-existent path is provided.
+- Verified standard sample datasets load cleanly.
+- Leading zero preservation (`"001"` remains string).
+- Rejection of duplicate headers, whitespace-only files, inconsistent row lengths, empty files, and header-only files.
+- Robust encoding detection across UTF-8, UTF-8-BOM, and Latin-1.
 
 ### 2.2 Academic Validation (`tests/test_validation.py`)
-- `test_valid_dataset_passes_validation`: Verified well-formed data passes with zero errors.
-- `test_missing_required_column`: Verified missing mandatory columns (e.g. Student ID) are caught.
-- `test_duplicate_student_id_rejected`: Verified duplicate ID rows are flagged with line references.
-- `test_out_of_range_attendance`: Verified values `< 0`, `> 100`, or strings are rejected.
-- `test_out_of_range_subject_score`: Verified scores exceeding subject maximum (e.g., 55/50 in lab) are flagged.
-- `test_absent_mark_allowed_without_error`: Verified `"ABS"` strings are accepted as excused/absent (0 score).
+- Verified mandatory column verification and row-level constraint checks.
+- Unique student ID validation with case-insensitive collision detection.
+- Non-empty student names accepting arbitrary international Unicode characters.
+- Attendance validation within [0.0, 100.0] as finite numbers.
+- Subject score validation rejecting out-of-range, NaN, and positive/negative infinity.
+- Support for documented absence indicators (`ABS`, `ABSENT`) while rejecting unstandardized codes.
 
-### 2.3 Grading & Normalization (`tests/test_grading.py`)
-- `test_monotonic_grade_boundaries_validation`: Verified disordered grade brackets (e.g., B higher than A) raise `PolicyConfigurationError`.
-- `test_lowest_grade_must_start_at_zero`: Verified omission of 0% baseline raises `PolicyConfigurationError`.
-- `test_assign_grade_to_percentage`: Verified boundary thresholds map to exact letter grades (A+, A, B, etc.).
-- `test_proportional_normalization_heterogeneous_marks`: Verified mixed 100-mark theory and 50-mark lab courses compute correct proportional percentages.
-- `test_subject_level_fail_with_high_aggregate`: Verified student with 60% aggregate who fails one subject (<40%) receives overall `FAIL` status.
-- `test_attendance_warning_flag`: Verified attendance below 75% triggers `attendance_warning = True`.
+### 2.3 Grading, Numerical Precision & Direct Evaluation (`tests/test_grading.py`)
+- Monotonic grade boundaries and 0% baseline validation.
+- Proportional normalization across heterogeneous course weights (100-mark theory vs 50-mark lab).
+- Exact boundary preservation without premature rounding:
+  - `39.996%` vs `40.0%` pass threshold $\rightarrow$ Strictly `FAIL`.
+  - Exactly `40.0%` pass threshold $\rightarrow$ `PASS`.
+  - Slightly above `40.0%` (`40.001%`) $\rightarrow$ `PASS`.
+  - `79.999%` vs `80.0%` Grade A boundary $\rightarrow$ Strictly `B+` (not prematurely promoted to A).
+  - Exactly `80.0%` $\rightarrow$ Grade `A`.
+  - Subject-level threshold: `19.999/50.0` ($39.998\%$) $\rightarrow$ failed subject; `20.0/50.0` ($40.0\%$) $\rightarrow$ passed subject.
+- Direct invocation fail-safe validation:
+  - Rejection of non-numeric marks (`ValueError`).
+  - Rejection of missing marks, `""`, `None`, and `NaN` (`ValueError`).
+  - Rejection of `NaN`, `Inf`, and `-Inf` (`ValueError`).
+  - Rejection of negative scores and scores exceeding subject maximum (`ValueError`).
+  - Rejection of missing, non-numeric, or out-of-range attendance (`ValueError`).
+  - Rejection of missing mandatory student IDs and names (`ValueError`).
+  - Rejection of empty/invalid subject configurations and missing columns (`PolicyConfigurationError`).
+  - Guarantee that input DataFrames are completely immutable and never modified in-place.
+  - Deterministic ranking of top performers using unrounded `raw_percentage` precision to break ties.
 
 ### 2.4 Statistical Analytics (`tests/test_analytics.py`)
-- `test_class_summary_metrics`: Verified class averages, medians, standard deviations, extremes, and pass rates.
-- `test_subject_analytics_and_difficulty_ranking`: Verified subject metrics and difficulty ranking (Rank 1 = hardest).
-- `test_deterministic_top_performers_tie_breaking`: Verified multi-key sorting (Percentage $\rightarrow$ Attendance $\rightarrow$ Student ID).
-- `test_academic_attention_indicators`: Verified all 4 transparent heuristics (Conceptual Support, Critical Intervention, Subject Outlier, Borderline Pass) flag matching students.
-- `test_department_summary`: Verified group aggregation by department.
+- Class averages, medians, standard deviations, extremes, and pass rates.
+- Difficulty ranking (Rank 1 = most challenging).
+- Deterministic multi-key tie-breaking leaderboard.
+- Transparent academic attention indicators.
+- Departmental comparative analytics.
 
 ### 2.5 Security & Sanitization (`tests/test_security.py`)
-- `test_defuse_formula_injection_triggers`: Verified `=`, `+`, `-`, `@`, `\t`, `\r` prefixes are neutralized with prepended `'`.
-- `test_generate_sanitized_csv_protects_exported_cells`: Verified full DataFrame export sanitization.
-- `test_file_size_limits`: Verified rejection of files exceeding 2 MB.
-- `test_binary_and_executable_rejection`: Verified rejection of null bytes and executable headers.
-- `test_csv_dimension_bounds`: Verified enforcement of 5,000 row and 30 column limits.
+- Formula injection (CWE-1236) neutralization on export.
+- File size, dimension, and binary executable upload constraints.
 
-### 2.6 Concurrency & Session Isolation (`tests/test_sessions.py`)
-- `test_concurrent_session_isolation`: Executed 10 interleaved threads across 2 different datasets and policies simultaneously. Verified 0% data cross-contamination.
+### 2.6 Concurrency & Session State Integrity (`tests/test_sessions.py`)
+- Thread-safe isolation and zero cross-contamination.
+- Deterministic MD5 dataset fingerprinting and state reset on dataset modification.
+- Invalidation of downstream results on parameter/mapping alterations.
 
 ---
 
 ## 3. Discovered Anomalies & Applied Resolutions
 
-During test execution, 3 specific edge cases were caught and resolved:
-
-1. **Pandas Header Mangling on Duplicate Columns:**
-   - *Problem:* Pandas `pd.read_csv` silently renames duplicate headers from `['Math', 'Math']` to `['Math', 'Math.1']`.
-   - *Fix:* Added raw byte inspection using Python's `csv.reader` on the initial line before passing to Pandas, guaranteeing clean rejection of duplicate column headers.
-2. **Numpy Boolean Identity Comparison:**
-   - *Problem:* Comparing `np.bool_(False) is False` evaluates to `False` in Python due to object identity mismatch.
-   - *Fix:* Replaced identity `is` with standard boolean comparison `assert not val` and cast internal boolean flags with `bool()`.
-3. **Attention Rule Precedence Collision:**
-   - *Problem:* Student with attendance 88% and score 43% satisfied both Rule 1 (Attendance $\ge$ 85% + Score $<$ 50%) and Rule 4 (Borderline Pass 40-44%).
-   - *Fix:* Clarified rule definitions and calibrated test fixtures so each test student uniquely validates their targeted attention category.
+1. **Premature Rounding Before Pass/Fail & Grade Evaluation:**
+   - *Problem:* `round(raw_percentage, 2)` before grade lookup and pass threshold checking caused near-boundary scores (e.g. 39.996% and 79.999%) to round up to 40.00% and 80.00%, falsely passing or promoting students.
+   - *Fix:* Separated `raw_percentage` (unrounded float) used for all grade assignment, pass evaluation, rankings, and attention checks, reserving `percentage` strictly for display. Implemented `is_greater_or_close(val, threshold, tol=1e-12)` to defend against IEEE 754 machine representation artifacts without allowing genuinely sub-threshold values to pass.
+2. **Silent Zero-Coercion in Direct Evaluation:**
+   - *Problem:* Calling `evaluate_students()` without prior `validate_dataset()` silently converted unparseable strings, missing values, NaNs, and Infs to 0.0.
+   - *Fix:* Added strict fail-safe validation directly inside `evaluate_students()`, raising clear `ValueError` exceptions on corrupted data.
+3. **Absence Marker Separation:**
+   - *Problem:* Risk of treating any missing or arbitrary text as an absence.
+   - *Fix:* Strictly constrained supported absence markers to documented set `{"ABS", "ABSENT"}` and raised errors on unstandardized codes.
 
 ---
 
 ## 4. Performance Benchmarks
 
 - **CLI Execution Time (25 records, 6 subjects):** ~0.04 seconds.
-- **Full Test Suite Execution Time (31 tests):** 0.06 seconds.
+- **Full Test Suite Execution Time (101 tests):** 1.62 seconds.
 - **Memory Footprint:** Less than 45 MB peak RAM during full evaluation.

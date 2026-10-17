@@ -1,10 +1,10 @@
 # EduMetrics 🎓
 ### Academic Performance Analytics Platform
 
-[![EduMetrics CI](https://github.com/rajkiranmishra/edumetrics/actions/workflows/ci.yml/badge.svg)](https://github.com/rajkiranmishra/edumetrics/actions)
+[![EduMetrics CI](https://github.com/rajkiranmishra/private/actions/workflows/ci.yml/badge.svg)](https://github.com/rajkiranmishra/private/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://www.python.org/)
-[![Tests: 125 Passed](https://img.shields.io/badge/Tests-125%20Passed-success.svg)](docs/TEST_REPORT.md)
+[![Tests: 134 Passed](https://img.shields.io/badge/Tests-134%20Passed-success.svg)](docs/TEST_REPORT.md)
 
 **EduMetrics** is a production-minded academic analytics platform that empowers teachers, professors, and academic coordinators to validate student performance datasets, configure institutional grading policies, compute statistical cohort distributions, and export sanitized reports without requiring spreadsheet programming.
 
@@ -120,7 +120,8 @@ EduMetrics includes two fictional datasets in `data/`:
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/rajkiranmishra/edumetrics.git
+# Clone active repository (or edumetrics.git once renamed)
+git clone https://github.com/rajkiranmishra/private.git edumetrics
 cd edumetrics
 ```
 
@@ -252,7 +253,7 @@ If a student fails any single subject, their overall status is `FAIL` with diagn
 
 ## 🧪 Automated Testing
 
-EduMetrics includes a comprehensive test suite of **125 automated tests** covering all modules:
+EduMetrics includes a comprehensive test suite of **134 automated tests** covering all modules:
 
 ```bash
 pytest -v
@@ -260,26 +261,32 @@ pytest -v
 
 ```
 ============================== test session starts ==============================
-collected 125 items
+collected 134 items
 
 tests/test_analytics.py .......                                           [  5%]
-tests/test_grading.py ..............................................      [ 42%]
-tests/test_loader.py .............                                        [ 52%]
-tests/test_reports.py ..                                                  [ 54%]
-tests/test_security.py .............                                      [ 64%]
-tests/test_sessions.py .............................                      [ 88%]
+tests/test_cli.py ......                                                  [ 10%]
+tests/test_grading.py ..............................................      [ 44%]
+tests/test_loader.py .............                                        [ 54%]
+tests/test_reports.py ..                                                  [ 55%]
+tests/test_security.py .............                                      [ 65%]
+tests/test_sessions.py ................................                   [ 89%]
 tests/test_validation.py ...............                                  [100%]
 
-============================== 125 passed in 2.71s ==============================
+============================== 134 passed in 3.48s ==============================
 ```
 
 ---
 
 ## 📚 Project Documentation Index
 
+- [USER_GUIDE.md](docs/USER_GUIDE.md) — Comprehensive user manual for educators and coordinators.
+- [DEPLOYMENT.md](docs/DEPLOYMENT.md) — Streamlit Community Cloud and Linux VM deployment procedures.
+- [USER_VALIDATION.md](docs/USER_VALIDATION.md) — Educator field testing protocol, questionnaire, and sample dataset.
+- [RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) — Quality gates, pre-flight checks, and release sign-off.
+- [RELEASE_NOTES.md](docs/RELEASE_NOTES.md) — Official EduMetrics V1.0.0 release notes.
 - [SRS.md](docs/SRS.md) — Comprehensive Software Requirements Specification.
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) — Component diagrams, data flow, and future relational DB schema.
-- [SECURITY.md](docs/SECURITY.md) — Threat model (STRIDE), trust boundaries, and vulnerability reporting.
+- [SECURITY.md](docs/SECURITY.md) — Threat model (STRIDE), trust boundaries, and vulnerability disclosure.
 - [TEST_REPORT.md](docs/TEST_REPORT.md) — Test execution evidence, bug fixes, and performance benchmarks.
 - [Project_Documentation.md](docs/Project_Documentation.md) — EWB Courses assignment compliance document (10 headings).
 

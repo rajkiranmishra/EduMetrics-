@@ -171,7 +171,7 @@ The project follows a **Headless Modular Monolith** architecture with strict sep
 ### 8. Final Outcome
 - The core analytical requirements of the EWB assignment were fully met using Python, NumPy, and Pandas.
 - The platform operates as both a standalone CLI and an interactive web application.
-- 116 automated tests pass cleanly with 100% success rate.
+- 134 automated tests pass cleanly with 100% success rate across Python 3.9, 3.10, and 3.11.
 - Two distinct fictional datasets demonstrate flexibility across K-12 and university academic structures.
 - All export files are protected against spreadsheet formula execution.
 
@@ -197,6 +197,8 @@ The project follows a **Headless Modular Monolith** architecture with strict sep
 ---
 
 ### 10. GitHub Repository
-- **Repository Name:** `edumetrics`
+- **Current Repository:** [https://github.com/rajkiranmishra/private](https://github.com/rajkiranmishra/private)
+- **Target Repository Name:** `edumetrics` *(Renaming pending user approval)*
+- **Working Branch:** `fix/v1-hardening`
 - **License:** MIT License
 - **Automated Testing:** GitHub Actions CI (`.github/workflows/ci.yml`)

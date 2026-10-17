@@ -45,6 +45,11 @@ from core.session_state import (
     compute_dataset_fingerprint,
 )
 
+# Robust paths for sample datasets resilient to arbitrary working directories
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SAMPLE_SCHOOL_PATH = os.path.join(BASE_DIR, "data", "sample_school.csv")
+SAMPLE_COLLEGE_PATH = os.path.join(BASE_DIR, "data", "sample_college.csv")
+
 # Page configuration
 st.set_page_config(
     page_title="EduMetrics — Academic Analytics",
@@ -178,8 +183,8 @@ with tabs[0]:
         - **Subjects:** English, Mathematics, Science, Social Studies, Second Language.
         - **Format:** Uniform 100-mark scoring scale.
         """)
-        if os.path.exists("data/sample_school.csv"):
-            with open("data/sample_school.csv", "rb") as f_s:
+        if os.path.exists(SAMPLE_SCHOOL_PATH):
+            with open(SAMPLE_SCHOOL_PATH, "rb") as f_s:
                 st.download_button(
                     label="⬇️ Download School CSV Template",
                     data=f_s.read(),
@@ -195,8 +200,8 @@ with tabs[0]:
         - **Identifiers:** Leading zero preservation (`"001"`, `"002"`).
         - **Subjects:** 100-mark theory subjects + 50-mark lab/project courses.
         """)
-        if os.path.exists("data/sample_college.csv"):
-            with open("data/sample_college.csv", "rb") as f_c:
+        if os.path.exists(SAMPLE_COLLEGE_PATH):
+            with open(SAMPLE_COLLEGE_PATH, "rb") as f_c:
                 st.download_button(
                     label="⬇️ Download College CSV Template",
                     data=f_c.read(),
@@ -235,7 +240,7 @@ with tabs[1]:
     with c1:
         if st.button("Load Sample School Dataset"):
             try:
-                with open("data/sample_school.csv", "rb") as f:
+                with open(SAMPLE_SCHOOL_PATH, "rb") as f:
                     file_bytes = f.read()
                 df, cols = load_csv_from_bytes(file_bytes, "sample_school.csv")
                 fingerprint = compute_dataset_fingerprint(file_bytes)
@@ -249,7 +254,7 @@ with tabs[1]:
     with c2:
         if st.button("Load Sample College Dataset"):
             try:
-                with open("data/sample_college.csv", "rb") as f:
+                with open(SAMPLE_COLLEGE_PATH, "rb") as f:
                     file_bytes = f.read()
                 df, cols = load_csv_from_bytes(file_bytes, "sample_college.csv")
                 fingerprint = compute_dataset_fingerprint(file_bytes)
@@ -540,7 +545,12 @@ with tabs[1]:
                 if len(edited_boundaries) < 12:
                     last = edited_boundaries[-1]
                     prev_pct = edited_boundaries[-2].min_percentage if len(edited_boundaries) >= 2 else 50.0
-                    new_pct = max(10.0, prev_pct - 10.0)
+                    if prev_pct > 20.0:
+                        new_pct = prev_pct - 10.0
+                    else:
+                        new_pct = round(prev_pct / 2.0, 1)
+                        if new_pct <= 0.0 or new_pct == prev_pct:
+                            new_pct = round(prev_pct * 0.75, 1)
                     st.session_state.custom_boundaries = list(edited_boundaries[:-1]) + [GradeBoundary(f"G{len(edited_boundaries)}", new_pct), last]
                     st.session_state.gb_version = gb_ver + 1
                     clear_analysis_results()
@@ -857,10 +867,10 @@ with tabs[4]:
         # Apply Filters
         filtered = df_eval.copy()
         if search_query:
-            query = search_query.lower()
+            query = search_query.strip().lower()
             filtered = filtered[
-                filtered["student_name"].str.lower().str.contains(query) |
-                filtered["student_id"].str.lower().str.contains(query)
+                filtered["student_name"].astype(str).str.lower().str.contains(query, regex=False, na=False) |
+                filtered["student_id"].astype(str).str.lower().str.contains(query, regex=False, na=False)
             ]
         if dept_filter != "All":
             filtered = filtered[filtered["department"] == dept_filter]

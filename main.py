@@ -70,8 +70,13 @@ def run_cli(args: argparse.Namespace) -> int:
 
     file_path = args.file
     if not os.path.exists(file_path):
-        print(f"\n[ERROR] Specified file not found: '{file_path}'")
-        return 1
+        # Also check relative to script directory as fallback
+        base_fallback = os.path.join(os.path.dirname(os.path.abspath(__file__)), file_path)
+        if os.path.exists(base_fallback):
+            file_path = base_fallback
+        else:
+            print(f"\n[ERROR] Specified file not found: '{file_path}'")
+            return 1
 
     print(f"[*] Ingesting academic dataset: {file_path}")
 

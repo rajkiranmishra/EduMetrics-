@@ -852,3 +852,79 @@ def test_grade_boundary_editor_preserves_user_edits_on_add_tier():
     assert len(bounds) == 8  # Default EduMetrics has 7 tiers, +1 tier = 8
 
 
+def test_grade_boundary_editor_preserves_user_edits_on_remove_tier():
+    """Verify that editing a grade boundary label and then removing a tier preserves edits."""
+    at = AppTest.from_file("app.py")
+    at.run()
+
+    # Load School sample dataset
+    at.button[0].click().run()
+    assert at.session_state["raw_df"] is not None
+
+    # Find the first grade label input and modify it to "Distinction"
+    label_input = [ti for ti in at.text_input if "Grade 1 Label" in ti.label][0]
+    label_input.set_value("Distinction").run()
+
+    # Click "➖ Remove Grade Level"
+    rem_btn = [b for b in at.button if "Remove Grade Level" in b.label][0]
+    rem_btn.click().run()
+
+    assert not at.exception
+    bounds = at.session_state["custom_boundaries"]
+    assert bounds[0].label == "Distinction"
+    assert len(bounds) == 6  # 7 tiers - 1 = 6
+
+
+def test_grade_boundary_editor_add_tier_at_low_percentage_avoids_duplicate():
+    """Verify that adding tiers when preceding tier is <= 20% strictly decreases and avoids duplicates."""
+    at = AppTest.from_file("app.py")
+    at.run()
+
+    # Load School sample dataset
+    at.button[0].click().run()
+    assert at.session_state["raw_df"] is not None
+
+    # Set boundaries with a very low tier (e.g. 10.0%)
+    at.session_state["custom_boundaries"] = [
+        GradeBoundary("Top", 90.0),
+        GradeBoundary("Mid", 50.0),
+        GradeBoundary("Low", 10.0),
+        GradeBoundary("Fail", 0.0),
+    ]
+    at.session_state["gb_version"] = 10
+    at.run()
+
+    add_btn = [b for b in at.button if "Add Grade Level" in b.label][0]
+    add_btn.click().run()
+
+    assert not at.exception
+    bounds = at.session_state["custom_boundaries"]
+    # Check all percentages are strictly decreasing
+    pcts = [b.min_percentage for b in bounds]
+    for i in range(len(pcts) - 1):
+        assert pcts[i] > pcts[i + 1]
+
+
+def test_student_search_special_characters_regex_safety():
+    """Verify that searching with regex metacharacters does not raise unhandled exceptions."""
+    at = AppTest.from_file("app.py")
+    at.run()
+
+    # Load School sample dataset
+    at.button[0].click().run()
+
+    # Run Analysis
+    run_btn = [b for b in at.button if "Run Academic Analysis" in b.label][0]
+    run_btn.click().run()
+    assert at.session_state["evaluated_df"] is not None
+
+    # Search with regex metacharacters that would crash re.compile if regex=True
+    search_inputs = [ti for ti in at.text_input if "Search by Student Name" in ti.label]
+    assert len(search_inputs) > 0
+    search_box = search_inputs[0]
+
+    for special_query in ["[", "(", "*", "+", "?", "\\", "^", "$", "(.*)"]:
+        search_box.set_value(special_query).run()
+        assert not at.exception, f"Crash encountered with search query: {special_query}"
+
+

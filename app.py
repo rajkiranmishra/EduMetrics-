@@ -34,6 +34,15 @@ from core.analytics import (
 )
 from core.reports import generate_text_summary, generate_sanitized_csv
 from core.session_state import (
+    PAGE_OVERVIEW,
+    PAGE_CONFIG,
+    PAGE_DASHBOARD,
+    PAGE_SUBJECTS,
+    PAGE_STUDENTS,
+    PAGE_ATTENTION,
+    PAGE_REPORTS,
+    PAGE_HELP,
+    ALL_NAV_PAGES,
     init_session_state,
     clear_analysis_results,
     replace_active_dataset,
@@ -84,13 +93,13 @@ st.markdown("""
         font-weight: 600;
         font-size: 0.85em;
     }
-    .privacy-notice {
-        background-color: #EFF6FF;
-        border-left: 4px solid #3B82F6;
-        padding: 12px 16px;
-        border-radius: 4px;
-        margin-bottom: 20px;
-        font-size: 0.9em;
+    .quickstart-card {
+        background-color: #FFFFFF;
+        border: 1px solid #E2E8F0;
+        border-radius: 8px;
+        padding: 20px;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+        height: 100%;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -100,93 +109,247 @@ st.markdown("""
 init_session_state()
 
 
-def reset_session():
-    """Reset the session workflow and clear active session references."""
-    reset_complete_workflow()
+def navigate_to(page: str):
+    """Programmatically navigate to a specified page and trigger a clean rerun."""
+    st.session_state.current_page = page
     st.rerun()
 
 
-# Sidebar Navigation & Session Controls
+def reset_session():
+    """Reset the session workflow and clear active session references."""
+    reset_complete_workflow()
+    st.session_state.current_page = PAGE_OVERVIEW
+    st.rerun()
+
+
+def run_quick_demo(model_type: str):
+    """Execute quick start demonstration workflow using the trusted core pipeline."""
+    if model_type == "school":
+        path = SAMPLE_SCHOOL_PATH
+        filename = "sample_school.csv"
+        id_col = "student_id"
+        name_col = "student_name"
+        att_col = "attendance"
+        dept_col = "department"
+        preset_name = "Default EduMetrics"
+        inst_meta = InstitutionMetadata(
+            institution_name="Greenwood High School",
+            academic_level="School",
+            program_name="Class 10-A",
+            academic_term="Term 1",
+        )
+        custom_max_marks = {}
+    elif model_type == "college":
+        path = SAMPLE_COLLEGE_PATH
+        filename = "sample_college.csv"
+        id_col = "student_id"
+        name_col = "student_name"
+        att_col = "attendance"
+        dept_col = "department"
+        preset_name = "Example College"
+        inst_meta = InstitutionMetadata(
+            institution_name="Apex Institute of Technology",
+            academic_level="College",
+            program_name="B.Tech Computer Science",
+            academic_term="Semester IV",
+        )
+        custom_max_marks = {
+            "Database_Lab": 50.0,
+            "Project_Work": 50.0,
+        }
+    else:
+        return
+
+    try:
+        with open(path, "rb") as f:
+            file_bytes = f.read()
+
+        df, cols = load_csv_from_bytes(file_bytes, filename)
+        fingerprint = compute_dataset_fingerprint(file_bytes)
+        replace_active_dataset(df, filename, fingerprint, source="sample")
+        st.session_state.uploader_key += 1
+
+        excluded = [id_col, name_col, att_col, dept_col]
+        selected_subjects = [c for c in cols if c not in excluded]
+        subject_configs = {
+            s: custom_max_marks.get(s, 50.0 if any(k in s.lower() for k in ["lab", "project", "practical"]) else 100.0)
+            for s in selected_subjects
+        }
+
+        preset_bounds = [GradeBoundary(b.label, b.min_percentage) for b in GRADING_PRESETS[preset_name]]
+        st.session_state.custom_boundaries = preset_bounds
+        st.session_state.gb_version += 1
+
+        policy = GradingPolicy(
+            subject_pass_percentage=40.0,
+            aggregate_pass_percentage=40.0,
+            attendance_warning_threshold=75.0,
+            grade_boundaries=preset_bounds,
+            subject_pass_overrides={},
+            enable_attendance_warning=True,
+        )
+        policy.validate()
+
+        val_res = validate_dataset(
+            df=df,
+            student_id_col=id_col,
+            name_col=name_col,
+            attendance_col=att_col,
+            subject_configs=subject_configs,
+            department_col=dept_col,
+        )
+        if not val_res.is_valid:
+            handle_failed_upload(f"Validation failed for {filename}: {val_res.errors[0]}")
+            return
+
+        df_evaluated = evaluate_students(
+            df=df,
+            student_id_col=id_col,
+            name_col=name_col,
+            attendance_col=att_col,
+            subject_configs=subject_configs,
+            policy=policy,
+            department_col=dept_col,
+        )
+        summary = compute_class_summary(df_evaluated)
+        subj_metrics = compute_subject_analytics(df_evaluated, subject_configs, policy.subject_pass_percentage)
+        attention_cases = identify_academic_attention_cases(
+            df_evaluated,
+            subject_configs,
+            policy.subject_pass_percentage,
+            aggregate_pass_threshold=policy.aggregate_pass_percentage,
+            attendance_warning_threshold=policy.attendance_warning_threshold,
+        )
+
+        st.session_state.evaluated_df = df_evaluated
+        st.session_state.class_summary = summary
+        st.session_state.subject_metrics = subj_metrics
+        st.session_state.attention_students = attention_cases
+        st.session_state.policy = policy
+        st.session_state.institution_metadata = inst_meta
+        st.session_state.subject_configs = subject_configs
+        st.session_state.analysis_config = create_analysis_config(
+            dataset_fingerprint=fingerprint,
+            student_id_col=id_col,
+            name_col=name_col,
+            attendance_col=att_col,
+            department_col=dept_col,
+            selected_subjects=selected_subjects,
+            subject_configs=subject_configs,
+            subject_pass_percentage=policy.subject_pass_percentage,
+            aggregate_pass_percentage=policy.aggregate_pass_percentage,
+            attendance_warning_threshold=policy.attendance_warning_threshold,
+            grade_boundaries=preset_bounds,
+            subject_pass_overrides={},
+            enable_attendance_warning=True,
+            institution_metadata=inst_meta,
+        )
+        st.session_state.config_stale = False
+
+        navigate_to(PAGE_DASHBOARD)
+    except Exception as err:
+        handle_failed_upload(f"Failed to execute quick demo for {filename}: {err}")
+        st.rerun()
+
+
+# =============================================================================
+# SIDEBAR NAVIGATION & SESSION CONTROLS
+# =============================================================================
 with st.sidebar:
     st.title("🎓 EduMetrics")
     st.caption("Academic Performance Analytics Platform (V1)")
     st.markdown("---")
 
+    # Active dataset status badge
     if st.session_state.evaluated_df is not None:
-        st.success(f"Active Dataset: **{st.session_state.dataset_name}**")
-        st.write(f"📊 Records: **{len(st.session_state.evaluated_df)}**")
+        st.success(f"Active: **{st.session_state.dataset_name}**")
+        st.write(f"📊 **{len(st.session_state.evaluated_df)}** Students Analyzed")
         st.write(f"📈 Pass Rate: **{st.session_state.class_summary.overall_pass_percentage:.1f}%**")
     elif st.session_state.raw_df is not None:
-        st.info(f"Loaded Dataset: **{st.session_state.dataset_name}**")
-        st.write(f"📊 Records: **{len(st.session_state.raw_df)}**")
+        st.info(f"Loaded: **{st.session_state.dataset_name}**")
+        st.write(f"📊 **{len(st.session_state.raw_df)}** Raw Records")
         st.caption("⚙️ Configure settings and click 'Run Academic Analysis' to view metrics.")
     elif st.session_state.upload_error is not None:
         st.error("Upload error detected.")
     else:
-        st.info("No active dataset loaded. Please upload a CSV to begin.")
+        st.info("No active dataset loaded.")
+
+    st.markdown("---")
+    st.markdown("### 🧭 Navigation")
+
+    # Keep nav_radio synchronized with current_page state
+    if "nav_radio" not in st.session_state or st.session_state.nav_radio != st.session_state.current_page:
+        st.session_state.nav_radio = st.session_state.current_page
+
+    def _on_nav_change():
+        st.session_state.current_page = st.session_state.nav_radio
+
+    selected_nav = st.radio(
+        "Navigate System",
+        options=ALL_NAV_PAGES,
+        key="nav_radio",
+        on_change=_on_nav_change,
+        label_visibility="collapsed",
+    )
+    st.session_state.current_page = selected_nav
 
     st.markdown("---")
     if st.button("🔄 Start New Analysis / Reset", use_container_width=True):
         reset_session()
 
     st.markdown("---")
-    st.markdown("### 🔒 Privacy & Operational Reality")
     st.caption(
-        "EduMetrics V1 processes data strictly in transient server-side memory. "
-        "The application does not intentionally persist datasets to disk or databases. "
-        "Streamlit session state is an ephemeral UI container, not an authenticated security boundary. "
-        "Resetting the session removes active references but cannot guarantee instant physical RAM erasure. "
-        "Please use fictional or anonymized student records only."
+        "🔒 **Privacy-First Design:** Transient in-memory computing only. "
+        "Please use fictional or anonymized student records."
     )
 
 
-# Top Banner Privacy Notice
-st.markdown("""
-<div class="privacy-notice">
-    <strong>EduMetrics Privacy Notice:</strong> Analysis occurs entirely in transient server-side memory scoped to your active session. 
-    The application does not intentionally persist uploaded student datasets to disk or databases. 
-    However, hosting providers may maintain operational memory/network logs, and browser sessions do not constitute an authenticated security boundary. 
-    Resetting the session removes active application references but cannot guarantee immediate physical RAM sanitization. 
-    <strong>Please upload fictional or properly de-identified / anonymized academic datasets only.</strong>
-</div>
-""", unsafe_allow_html=True)
+# =============================================================================
+# TOP HEADER & PRIVACY NOTICE (PHASE 3)
+# =============================================================================
+st.info(
+    "🔒 **EduMetrics Privacy Notice:** Analysis occurs strictly in transient session memory. "
+    "The platform does not persist datasets to disk or databases. "
+    "Please upload fictional or properly de-identified / anonymized academic records only."
+)
+with st.expander("ℹ️ Data Protection, Operational Reality & Hosting Considerations", expanded=False):
+    st.markdown("""
+    - **Transient Processing:** Data is held in transient server-side memory scoped to your active session.
+    - **Session Container Reality:** Streamlit session state is an ephemeral UI container, not an authenticated multi-tenant security boundary.
+    - **Hosting Environment:** Cloud hosting providers may maintain operational logs and runtime caches outside application control.
+    - **Session Reset:** Resetting the session removes active application references but cannot guarantee instant physical RAM sanitization.
+    """)
 
 
-# Main Tab Navigation
-tabs = st.tabs([
-    "📖 Overview & Samples",
-    "📤 Upload & Configure",
-    "📊 Performance Dashboard",
-    "📚 Subject Analysis",
-    "🔍 Student Explorer",
-    "⚠️ Academic Attention",
-    "📥 Reports & Export",
-    "ℹ️ Help & Methodology",
-])
-
-
-# -----------------------------------------------------------------------------
-# TAB 1: OVERVIEW & SAMPLES
-# -----------------------------------------------------------------------------
-with tabs[0]:
+# =============================================================================
+# DESTINATION 1: OVERVIEW & QUICK START (PHASE 4)
+# =============================================================================
+if st.session_state.current_page == PAGE_OVERVIEW:
     st.header("Academic Performance Analytics Platform")
     st.markdown("""
     **EduMetrics** enables educators to validate marks datasets, configure institutional grading policies, 
     perform statistical analyses, and download sanitized reports without requiring spreadsheet programming.
     """)
 
-    col1, col2 = st.columns(2)
+    st.subheader("⚡ Quick Start Options")
+    st.caption("Explore EduMetrics immediately with pre-configured fictional datasets or upload your own:")
+
+    col1, col2, col3 = st.columns(3)
+
     with col1:
-        st.subheader("🏫 Sample 1: K-12 School Model")
+        st.markdown("### 🏫 School Model")
         st.markdown("""
-        - **Records:** 20 fictional students across 2 sections.
-        - **Subjects:** English, Mathematics, Science, Social Studies, Second Language.
-        - **Format:** Uniform 100-mark scoring scale.
+        - **Records:** 20 fictional students (2 sections)
+        - **Format:** Uniform 100-mark scoring scale
+        - **Subjects:** English, Math, Science, Social, Language
+        - **Grading:** Standard 7-tier scale (A+ to F)
         """)
+        if st.button("🚀 Load & Analyze School Model", type="primary", key="btn_quick_school", use_container_width=True):
+            run_quick_demo("school")
         if os.path.exists(SAMPLE_SCHOOL_PATH):
             with open(SAMPLE_SCHOOL_PATH, "rb") as f_s:
                 st.download_button(
-                    label="⬇️ Download School CSV Template",
+                    label="⬇️ Download School CSV",
                     data=f_s.read(),
                     file_name="sample_school.csv",
                     mime="text/csv",
@@ -194,38 +357,59 @@ with tabs[0]:
                 )
 
     with col2:
-        st.subheader("🏛️ Sample 2: University Engineering Model")
+        st.markdown("### 🏛️ College Model")
         st.markdown("""
-        - **Records:** 25 fictional students across CSE, IT, and ECE.
-        - **Identifiers:** Leading zero preservation (`"001"`, `"002"`).
-        - **Subjects:** 100-mark theory subjects + 50-mark lab/project courses.
+        - **Records:** 25 fictional engineering students
+        - **Format:** Theory (100) + Lab/Project (50)
+        - **IDs:** Formatted identifiers (`'001'`, `'002'`)
+        - **Grading:** Collegiate scale (O, E, A, B, C, P, F)
         """)
+        if st.button("🚀 Load & Analyze College Model", type="primary", key="btn_quick_college", use_container_width=True):
+            run_quick_demo("college")
         if os.path.exists(SAMPLE_COLLEGE_PATH):
             with open(SAMPLE_COLLEGE_PATH, "rb") as f_c:
                 st.download_button(
-                    label="⬇️ Download College CSV Template",
+                    label="⬇️ Download College CSV",
                     data=f_c.read(),
                     file_name="sample_college.csv",
                     mime="text/csv",
                     use_container_width=True,
                 )
 
+    with col3:
+        st.markdown("### 📤 Custom Dataset")
+        st.markdown("""
+        - **Upload:** Analyze your institution's marks sheet
+        - **Limits:** Plain text CSV, <= 2 MB, <= 10,000 rows
+        - **Features:** Auto column mapping & custom grading
+        - **Security:** Formula injection protection (CWE-1236)
+        """)
+        st.write("")
+        if st.button("📂 Go to Dataset Upload & Config", key="btn_quick_upload", use_container_width=True):
+            navigate_to(PAGE_CONFIG)
+
     st.markdown("---")
-    st.markdown("### Quick Start Workflow")
+    st.markdown("### 📋 Recommended Workflow")
     st.markdown("""
-    1. Download one of the sample CSV templates above or prepare your own CSV.
-    2. Switch to the **Upload & Configure** tab.
-    3. Upload your CSV and verify column mappings.
-    4. Adjust grading boundaries, pass thresholds, and maximum marks if needed.
-    5. Click **Run Academic Analysis** to generate the interactive dashboard.
+    1. **Ingest Data:** Select a demonstration model above or upload your institution's CSV marks sheet in **Upload & Configure**.
+    2. **Review Configuration:** Verify column bindings, subject maximum marks, and passing criteria.
+    3. **Run Analysis:** Click **Run Academic Analysis** to calculate percentages, letter grades, and diagnostic indicators.
+    4. **Examine Insights:** Explore class performance on the **Dashboard**, evaluate curriculum difficulty in **Subject Analysis**, and inspect flagged learners in **Academic Attention**.
+    5. **Export Reports:** Download sanitized CSV data defused against formula injection or generate text audit reports in **Reports & Export**.
     """)
 
 
-# -----------------------------------------------------------------------------
-# TAB 2: UPLOAD & CONFIGURE
-# -----------------------------------------------------------------------------
-with tabs[1]:
+# =============================================================================
+# DESTINATION 2: UPLOAD & CONFIGURE (PHASE 5)
+# =============================================================================
+elif st.session_state.current_page == PAGE_CONFIG:
     st.header("Dataset Ingestion & Configuration")
+
+    # -------------------------------------------------------------------------
+    # GROUP 1: DATASET UPLOAD & COLUMN MAPPING
+    # -------------------------------------------------------------------------
+    st.subheader("1. Dataset Upload & Column Mapping")
+    st.caption("Upload an academic marks CSV or load a built-in demonstration dataset:")
 
     uploaded_file = st.file_uploader(
         "Upload Academic Marks CSV",
@@ -266,12 +450,11 @@ with tabs[1]:
                 sample_loaded = True
             st.rerun()
 
-    # Process uploaded file if user provided one and a sample dataset was not just selected
+    # Process uploaded file if user provided one
     if not sample_loaded and uploaded_file is not None:
         try:
             file_bytes = uploaded_file.getvalue()
             fingerprint = compute_dataset_fingerprint(file_bytes)
-            # Detect actual dataset change or initial upload
             if (
                 fingerprint != st.session_state.dataset_fingerprint
                 or st.session_state.dataset_source != "upload"
@@ -286,72 +469,23 @@ with tabs[1]:
                 "Upload rejected: The file could not be parsed as a valid CSV. Please ensure it is well-formed."
             )
     elif not sample_loaded and uploaded_file is None:
-        # If user removed the file in the uploader and the active dataset was from an upload
         if st.session_state.dataset_source == "upload":
             clear_removed_upload()
 
-    # Display upload errors if any
     if st.session_state.upload_error:
         st.error(st.session_state.upload_error)
         st.info("ℹ️ Previous dataset and analysis results have been cleared to prevent data inconsistency. Please provide a valid CSV.")
 
-    # Configuration Form
+    # Show configuration only when raw data is present
     if st.session_state.raw_df is not None:
         raw_df = st.session_state.raw_df
         available_cols = list(raw_df.columns)
         fp = st.session_state.dataset_fingerprint or "default"
 
-        # ---------------------------------------------------------------------
-        # 1. INSTITUTION DETAILS
-        # ---------------------------------------------------------------------
-        st.subheader("1. Institution Details")
-        st.caption("Configure optional institutional metadata to contextualize academic performance reports.")
-        with st.expander("🏫 Institution Metadata (Optional)", expanded=False):
-            inst_col1, inst_col2 = st.columns(2)
-            with inst_col1:
-                inst_name = st.text_input(
-                    "Institution Name",
-                    value=st.session_state.institution_metadata.institution_name,
-                    key=f"inst_name_{fp}",
-                    help="Name of school, college, or university (e.g. Greenwood High School).",
-                )
-                level_options = ["School", "College", "University", "Other"]
-                curr_level = st.session_state.institution_metadata.academic_level or "School"
-                curr_lvl_idx = level_options.index(curr_level) if curr_level in level_options else 0
-                inst_level = st.selectbox(
-                    "Academic Level",
-                    options=level_options,
-                    index=curr_lvl_idx,
-                    key=f"inst_level_{fp}",
-                    help="Classification of the educational institution.",
-                )
-            with inst_col2:
-                inst_program = st.text_input(
-                    "Class / Course / Program Name",
-                    value=st.session_state.institution_metadata.program_name,
-                    key=f"inst_prog_{fp}",
-                    help="e.g. Class 10-A, B.Tech Computer Science, Year 2.",
-                )
-                inst_term = st.text_input(
-                    "Academic Term / Semester",
-                    value=st.session_state.institution_metadata.academic_term,
-                    key=f"inst_term_{fp}",
-                    help="e.g. Term 1, Semester IV, Fall 2026.",
-                )
-            current_inst_meta = InstitutionMetadata(
-                institution_name=inst_name,
-                academic_level=inst_level,
-                program_name=inst_program,
-                academic_term=inst_term,
-            )
+        st.markdown("---")
+        st.write(f"**Active Dataset:** `{st.session_state.dataset_name}` ({len(raw_df)} records, {len(available_cols)} columns)")
 
-        # ---------------------------------------------------------------------
-        # 2. COLUMN MAPPING
-        # ---------------------------------------------------------------------
-        st.subheader("2. Column Mapping")
-        st.caption("Map the columns in your CSV to standard academic fields.")
-
-        # Heuristic auto-selection of columns
+        # Heuristic auto-selection helper
         def find_default(candidates: list, options: list) -> int:
             for c in candidates:
                 for idx, opt in enumerate(options):
@@ -363,7 +497,7 @@ with tabs[1]:
         with cm1:
             id_idx = find_default(["student_id", "id", "roll", "reg_no"], available_cols)
             selected_id = st.selectbox(
-                "Student ID *",
+                "Student ID Column *",
                 available_cols,
                 index=id_idx,
                 key=f"col_id_{fp}",
@@ -372,7 +506,7 @@ with tabs[1]:
         with cm2:
             name_idx = find_default(["student_name", "name", "full_name"], available_cols)
             selected_name = st.selectbox(
-                "Student Name *",
+                "Student Name Column *",
                 available_cols,
                 index=name_idx,
                 key=f"col_name_{fp}",
@@ -381,7 +515,7 @@ with tabs[1]:
         with cm3:
             att_idx = find_default(["attendance", "attendance_pct", "att"], available_cols)
             selected_att = st.selectbox(
-                "Attendance (%) *",
+                "Attendance (%) Column *",
                 available_cols,
                 index=att_idx,
                 key=f"col_att_{fp}",
@@ -391,7 +525,7 @@ with tabs[1]:
             dept_opts = ["None"] + available_cols
             dept_idx = find_default(["department", "dept", "section", "class"], dept_opts)
             selected_dept_opt = st.selectbox(
-                "Department / Section",
+                "Department / Section Column",
                 dept_opts,
                 index=dept_idx,
                 key=f"col_dept_{fp}",
@@ -400,10 +534,11 @@ with tabs[1]:
             selected_dept = None if selected_dept_opt == "None" else selected_dept_opt
 
         # ---------------------------------------------------------------------
-        # 3. SUBJECT CONFIGURATION
+        # GROUP 2: SUBJECT MARKS & PASSING RULES
         # ---------------------------------------------------------------------
-        st.subheader("3. Subject Configuration")
-        st.caption("Select academic courses, specify maximum possible marks, and configure subject pass thresholds.")
+        st.markdown("---")
+        st.subheader("2. Subject Marks & Passing Rules")
+        st.caption("Select academic courses, specify maximum achievable marks, and configure subject pass cutoffs.")
 
         excluded_from_subjects = [selected_id, selected_name, selected_att]
         if selected_dept:
@@ -421,11 +556,11 @@ with tabs[1]:
         subject_configs: Dict[str, float] = {}
         subject_pass_overrides: Dict[str, float] = {}
         if selected_subjects:
-            st.write("**Subject Maximum Marks & Passing Cutoffs:**")
+            st.write("**Subject Maximum Possible Marks:**")
             enable_overrides = st.checkbox(
-                "Configure subject-specific passing thresholds (optional)",
+                "Configure subject-specific passing cutoffs (optional)",
                 key=f"enable_subj_overrides_{fp}",
-                help="Check this if different courses have distinct passing percentage cutoffs (e.g. 50% for practical vs 40% for theory).",
+                help="Check this if specific courses have distinct passing percentage cutoffs (e.g. 50% for practical vs 40% for theory).",
             )
             sub_cols = st.columns(min(len(selected_subjects), 4))
             for i, subj in enumerate(selected_subjects):
@@ -454,10 +589,12 @@ with tabs[1]:
                     subject_pass_overrides[subj] = float(pass_val)
 
         # ---------------------------------------------------------------------
-        # 4. GRADING POLICY
+        # GROUP 3: INSTITUTION & GRADING POLICIES
         # ---------------------------------------------------------------------
-        st.subheader("4. Grading Policy")
+        st.markdown("---")
+        st.subheader("3. Institution & Grading Policies")
         st.caption("Configure passing criteria, grading scale presets, and customizable grade brackets.")
+
         pol1, pol2 = st.columns(2)
         with pol1:
             subj_pass_pct = st.number_input(
@@ -480,9 +617,31 @@ with tabs[1]:
                 help="Minimum overall normalized aggregate percentage required to pass.",
             )
 
-        # Sample Presets Selector
+        # Attendance Policy
+        att1, att2 = st.columns(2)
+        with att1:
+            att_warn_thresh = st.number_input(
+                "Attendance Warning Cutoff (%)",
+                min_value=0.0,
+                max_value=100.0,
+                value=75.0,
+                step=1.0,
+                key=f"pol_att_{fp}",
+                help="Attendance percentage below which students receive an advisory attendance alert.",
+            )
+        with att2:
+            st.write("")
+            st.write("")
+            enable_att_warn = st.checkbox(
+                "Enable Attendance Shortage Warning Indicator",
+                value=True,
+                key=f"pol_att_enable_{fp}",
+                help="When enabled, flags students below the attendance cutoff. Attendance warnings do not cause academic course failure.",
+            )
+        st.caption("ℹ️ **Pastoral Separation:** Attendance is monitored as a pastoral and regulatory indicator. Low attendance triggers an advisory alert but does not automatically fail students academically.")
+
+        # Presets & Grade Boundaries
         st.write("**Grading Scale Presets:**")
-        st.caption("Select a sample preset (illustrative reference, not official institutional regulations):")
         pre_col1, pre_col2 = st.columns([3, 1])
         with pre_col1:
             preset_choice = st.selectbox(
@@ -501,9 +660,8 @@ with tabs[1]:
                 st.session_state.config_stale = True
                 st.rerun()
 
-        # Custom Grade Boundaries Editor
-        st.write("**Grade Boundaries:**")
-        st.caption("Customize letter grade labels and minimum percentage thresholds (unrounded percentage evaluation).")
+        st.write("**Grade Boundaries Editor:**")
+        st.caption("Customize letter grade labels and minimum percentage thresholds (evaluated with unrounded precision):")
         gb_ver = st.session_state.get("gb_version", 0)
         active_bounds = st.session_state.get("custom_boundaries", GRADING_PRESETS["Default EduMetrics"])
 
@@ -583,39 +741,54 @@ with tabs[1]:
             policy_error = str(p_val_err)
             st.error(f"⚠️ Policy Validation Warning: {policy_error}")
 
-        # ---------------------------------------------------------------------
-        # 5. ATTENDANCE POLICY
-        # ---------------------------------------------------------------------
-        st.subheader("5. Attendance Policy")
-        st.caption("Configure attendance shortage alert threshold and academic evaluation isolation.")
-        att1, att2 = st.columns(2)
-        with att1:
-            att_warn_thresh = st.number_input(
-                "Attendance Warning Cutoff (%)",
-                min_value=0.0,
-                max_value=100.0,
-                value=75.0,
-                step=1.0,
-                key=f"pol_att_{fp}",
-                help="Attendance percentage below which students receive an attendance warning.",
+        # Optional Institution Metadata
+        with st.expander("🏫 Institution Metadata (Optional)", expanded=False):
+            inst_col1, inst_col2 = st.columns(2)
+            with inst_col1:
+                inst_name = st.text_input(
+                    "Institution Name",
+                    value=st.session_state.institution_metadata.institution_name,
+                    key=f"inst_name_{fp}",
+                    help="Name of school, college, or university (e.g. Greenwood High School).",
+                )
+                level_options = ["School", "College", "University", "Other"]
+                curr_level = st.session_state.institution_metadata.academic_level or "School"
+                curr_lvl_idx = level_options.index(curr_level) if curr_level in level_options else 0
+                inst_level = st.selectbox(
+                    "Academic Level",
+                    options=level_options,
+                    index=curr_lvl_idx,
+                    key=f"inst_level_{fp}",
+                    help="Classification of the educational institution.",
+                )
+            with inst_col2:
+                inst_program = st.text_input(
+                    "Class / Course / Program Name",
+                    value=st.session_state.institution_metadata.program_name,
+                    key=f"inst_prog_{fp}",
+                    help="e.g. Class 10-A, B.Tech Computer Science, Year 2.",
+                )
+                inst_term = st.text_input(
+                    "Academic Term / Semester",
+                    value=st.session_state.institution_metadata.academic_term,
+                    key=f"inst_term_{fp}",
+                    help="e.g. Term 1, Semester IV, Fall 2026.",
+                )
+            current_inst_meta = InstitutionMetadata(
+                institution_name=inst_name,
+                academic_level=inst_level,
+                program_name=inst_program,
+                academic_term=inst_term,
             )
-        with att2:
-            st.write("")
-            st.write("")
-            enable_att_warn = st.checkbox(
-                "Enable Attendance Shortage Warning Indicator",
-                value=True,
-                key=f"pol_att_enable_{fp}",
-                help="When enabled, flags students below the attendance cutoff. Attendance warnings do not cause academic course failure.",
-            )
-        st.caption("ℹ️ **Academic Distinction:** Attendance is monitored as a pastoral and regulatory indicator. Low attendance triggers an advisory warning but does not automatically fail students.")
+            st.session_state.institution_metadata = current_inst_meta
 
         # ---------------------------------------------------------------------
-        # 6. POLICY PREVIEW
+        # GROUP 4: POLICY PREVIEW & RUN ANALYSIS
         # ---------------------------------------------------------------------
-        st.subheader("6. Policy Preview")
-        st.caption("Review active institutional settings, passing criteria, and grade scale before analysis.")
-        with st.expander("👁️ View Active Policy Snapshot", expanded=True):
+        st.markdown("---")
+        st.subheader("4. Policy Preview & Run Analysis")
+
+        with st.expander("👁️ View Active Policy Snapshot", expanded=False):
             if not current_inst_meta.is_empty():
                 st.markdown(f"**Institution:** {current_inst_meta.institution_name or 'N/A'} | **Level:** {current_inst_meta.academic_level} | **Program:** {current_inst_meta.program_name or 'N/A'} | **Term:** {current_inst_meta.academic_term or 'N/A'}")
             p_prev1, p_prev2 = st.columns(2)
@@ -638,11 +811,6 @@ with tabs[1]:
                         rng = f"≥ {b.min_percentage:.0f}% to < {prev_b.min_percentage:.0f}%"
                     scale_items.append({"Grade": b.label, "Minimum %": f"{b.min_percentage:.1f}%", "Score Range": rng})
                 st.dataframe(pd.DataFrame(scale_items), hide_index=True, use_container_width=True)
-
-        # ---------------------------------------------------------------------
-        # 7. RUN ANALYSIS
-        # ---------------------------------------------------------------------
-        st.subheader("7. Run Analysis")
 
         current_config = create_analysis_config(
             dataset_fingerprint=st.session_state.dataset_fingerprint or "",
@@ -678,7 +846,6 @@ with tabs[1]:
             elif policy_error:
                 st.error(f"Cannot run analysis with invalid grading policy: {policy_error}")
             else:
-                # 1. Validate dataset
                 val_result = validate_dataset(
                     df=raw_df,
                     student_id_col=selected_id,
@@ -693,7 +860,6 @@ with tabs[1]:
                     for err in val_result.errors:
                         st.markdown(f"- **{err}**")
                 else:
-                    # 2. Build Policy & Evaluate
                     try:
                         policy = GradingPolicy(
                             subject_pass_percentage=subj_pass_pct,
@@ -714,7 +880,6 @@ with tabs[1]:
                             department_col=selected_dept,
                         )
 
-                        # 3. Analytics
                         pass_thresh_param = policy.subject_pass_overrides if policy.subject_pass_overrides else policy.subject_pass_percentage
                         summary = compute_class_summary(df_evaluated)
                         subj_metrics = compute_subject_analytics(df_evaluated, subject_configs, pass_thresh_param)
@@ -726,7 +891,6 @@ with tabs[1]:
                             attendance_warning_threshold=policy.attendance_warning_threshold,
                         )
 
-                        # Store in session state
                         st.session_state.evaluated_df = df_evaluated
                         st.session_state.class_summary = summary
                         st.session_state.subject_metrics = subj_metrics
@@ -737,19 +901,31 @@ with tabs[1]:
                         st.session_state.analysis_config = current_config
                         st.session_state.config_stale = False
 
-                        st.success("✅ Analysis successfully computed! View the results across the tabs above.")
+                        st.success("✅ Analysis successfully computed! View the results across the analytics views.")
                     except PolicyConfigurationError as p_err:
                         st.error(f"⚠️ Policy Configuration Error: {p_err}")
                     except ValueError as v_err:
                         st.error(f"⚠️ Academic Evaluation Error: {v_err}")
 
+        # Post-analysis redirect action
+        if st.session_state.evaluated_df is not None:
+            if st.button("👉 View Performance Dashboard", key="btn_goto_dash_after_eval", use_container_width=True):
+                navigate_to(PAGE_DASHBOARD)
 
-# -----------------------------------------------------------------------------
-# TAB 3: PERFORMANCE DASHBOARD
-# -----------------------------------------------------------------------------
-with tabs[2]:
+
+# =============================================================================
+# DESTINATION 3: PERFORMANCE DASHBOARD (PHASE 6)
+# =============================================================================
+elif st.session_state.current_page == PAGE_DASHBOARD:
     if st.session_state.evaluated_df is None:
-        st.info("Please upload a dataset and run the analysis in the 'Upload & Configure' tab.")
+        st.info("ℹ️ No active dataset analyzed yet. To view performance analytics:")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("🚀 Load & Analyze School Demo", key="dash_empty_school", use_container_width=True):
+                run_quick_demo("school")
+        with c2:
+            if st.button("📂 Go to Dataset Upload & Config", key="dash_empty_upload", use_container_width=True):
+                navigate_to(PAGE_CONFIG)
     else:
         summary = st.session_state.class_summary
         df_eval = st.session_state.evaluated_df
@@ -757,7 +933,7 @@ with tabs[2]:
         inst_title = f"{st.session_state.institution_metadata.institution_name} — " if (st.session_state.institution_metadata and st.session_state.institution_metadata.institution_name) else ""
         st.header(f"Academic Performance Dashboard — {inst_title}{st.session_state.dataset_name}")
 
-        # Top Metric Cards
+        # KPI Metric Cards
         m1, m2, m3, m4, m5 = st.columns(5)
         m1.metric("Total Students", summary.total_students)
         m2.metric("Overall Pass Rate", f"{summary.overall_pass_percentage:.1f}%", f"{summary.passed_students} Passed")
@@ -767,16 +943,21 @@ with tabs[2]:
 
         st.markdown("---")
 
-        # Class Grade Distribution & Extremes
+        # Grade Distribution & Extremes
         c_left, c_right = st.columns([3, 2])
 
         with c_left:
             st.subheader("📊 Letter Grade Distribution")
             if summary.grade_distribution:
-                # Order grades according to active grading policy
                 grade_order = [b.label for b in st.session_state.policy.grade_boundaries]
                 ordered_counts = {g: summary.grade_distribution.get(g, 0) for g in grade_order}
                 st.bar_chart(ordered_counts)
+
+                dist_rows = [
+                    {"Grade": g, "Count": ordered_counts.get(g, 0), "Share (%)": f"{(ordered_counts.get(g, 0) / summary.total_students * 100):.1f}%"}
+                    for g in grade_order
+                ]
+                st.dataframe(pd.DataFrame(dist_rows), hide_index=True, use_container_width=True)
             else:
                 st.write("No grades assigned.")
 
@@ -805,12 +986,14 @@ with tabs[2]:
         st.dataframe(top_df[[c for c in display_top_cols if c in top_df.columns]], hide_index=True, use_container_width=True)
 
 
-# -----------------------------------------------------------------------------
-# TAB 4: SUBJECT ANALYSIS
-# -----------------------------------------------------------------------------
-with tabs[3]:
+# =============================================================================
+# DESTINATION 4: SUBJECT ANALYSIS
+# =============================================================================
+elif st.session_state.current_page == PAGE_SUBJECTS:
     if st.session_state.evaluated_df is None:
-        st.info("Please upload a dataset and run the analysis in the 'Upload & Configure' tab.")
+        st.info("ℹ️ No active dataset analyzed yet. Please load a dataset first.")
+        if st.button("🚀 Load & Analyze School Demo", key="sub_empty_school"):
+            run_quick_demo("school")
     else:
         st.header("Subject-Wise Performance & Difficulty Rankings")
         metrics = st.session_state.subject_metrics
@@ -833,29 +1016,34 @@ with tabs[3]:
             chart_data[sm.subject_name] = sm.pass_percentage
 
         st.dataframe(pd.DataFrame(subj_rows), hide_index=True, use_container_width=True)
-        st.caption("*(Difficulty Rank #1 indicates the most challenging subject based on pass rate and average score)*")
+        st.caption("*(Difficulty Rank #1 indicates the most challenging subject based on pass rate and average percentage score)*")
+
+        if metrics:
+            hardest = metrics[0]
+            st.info(f"📌 **Curriculum Diagnostic:** The most challenging course for this cohort is **{hardest.subject_name}** with a pass rate of **{hardest.pass_percentage:.1f}%** (Class Avg: {hardest.average_percentage:.1f}%).")
 
         st.subheader("Subject Pass Rate Comparison")
         st.bar_chart(chart_data)
 
 
-# -----------------------------------------------------------------------------
-# TAB 5: STUDENT EXPLORER
-# -----------------------------------------------------------------------------
-with tabs[4]:
+# =============================================================================
+# DESTINATION 5: STUDENT EXPLORER (PHASE 7)
+# =============================================================================
+elif st.session_state.current_page == PAGE_STUDENTS:
     if st.session_state.evaluated_df is None:
-        st.info("Please upload a dataset and run the analysis in the 'Upload & Configure' tab.")
+        st.info("ℹ️ No active dataset analyzed yet. Please load a dataset first.")
+        if st.button("🚀 Load & Analyze School Demo", key="stud_empty_school"):
+            run_quick_demo("school")
     else:
         df_eval = st.session_state.evaluated_df
         st.header("Student Records Explorer")
 
-        # Filters
         f1, f2, f3 = st.columns(3)
         with f1:
             search_query = st.text_input("🔍 Search by Student Name or ID", "")
         with f2:
             dept_filter = st.selectbox(
-                "Filter by Department",
+                "Filter by Department / Section",
                 options=["All"] + sorted(list(df_eval["department"].unique())),
             )
         with f3:
@@ -864,7 +1052,7 @@ with tabs[4]:
                 options=["All", "PASS", "FAIL"],
             )
 
-        # Apply Filters
+        # Apply Filters (regex=False, na=False guarantees literal string matching)
         filtered = df_eval.copy()
         if search_query:
             query = search_query.strip().lower()
@@ -881,12 +1069,14 @@ with tabs[4]:
         st.dataframe(filtered, hide_index=True, use_container_width=True)
 
 
-# -----------------------------------------------------------------------------
-# TAB 6: ACADEMIC ATTENTION
-# -----------------------------------------------------------------------------
-with tabs[5]:
+# =============================================================================
+# DESTINATION 6: ACADEMIC ATTENTION
+# =============================================================================
+elif st.session_state.current_page == PAGE_ATTENTION:
     if st.session_state.evaluated_df is None:
-        st.info("Please upload a dataset and run the analysis in the 'Upload & Configure' tab.")
+        st.info("ℹ️ No active dataset analyzed yet. Please load a dataset first.")
+        if st.button("🚀 Load & Analyze School Demo", key="att_empty_school"):
+            run_quick_demo("school")
     else:
         attention = st.session_state.attention_students
         st.header(f"Academic Attention Indicators ({len(attention)} Flagged)")
@@ -905,12 +1095,14 @@ with tabs[5]:
                     st.info(f"**Recommended Action:** {s.action_item}")
 
 
-# -----------------------------------------------------------------------------
-# TAB 7: REPORTS & EXPORT
-# -----------------------------------------------------------------------------
-with tabs[6]:
+# =============================================================================
+# DESTINATION 7: REPORTS & EXPORT
+# =============================================================================
+elif st.session_state.current_page == PAGE_REPORTS:
     if st.session_state.evaluated_df is None:
-        st.info("Please upload a dataset and run the analysis in the 'Upload & Configure' tab.")
+        st.info("ℹ️ No active dataset analyzed yet. Please load a dataset first.")
+        if st.button("🚀 Load & Analyze School Demo", key="rep_empty_school"):
+            run_quick_demo("school")
     else:
         df_eval = st.session_state.evaluated_df
         summary = st.session_state.class_summary
@@ -964,10 +1156,10 @@ with tabs[6]:
         st.text(text_rep)
 
 
-# -----------------------------------------------------------------------------
-# TAB 8: HELP & METHODOLOGY
-# -----------------------------------------------------------------------------
-with tabs[7]:
+# =============================================================================
+# DESTINATION 8: HELP & METHODOLOGY
+# =============================================================================
+elif st.session_state.current_page == PAGE_HELP:
     st.header("System Methodology & Academic Principles")
 
     st.markdown("""

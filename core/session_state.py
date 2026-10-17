@@ -17,6 +17,27 @@ import pandas as pd
 from core.grading import GradingPolicy, GradeBoundary, InstitutionMetadata
 
 
+PAGE_OVERVIEW = "📖 Overview & Quick Start"
+PAGE_CONFIG = "📤 Upload & Configure"
+PAGE_DASHBOARD = "📊 Performance Dashboard"
+PAGE_SUBJECTS = "📚 Subject Analysis"
+PAGE_STUDENTS = "🔍 Student Explorer"
+PAGE_ATTENTION = "⚠️ Academic Attention"
+PAGE_REPORTS = "📥 Reports & Export"
+PAGE_HELP = "ℹ️ Help & Methodology"
+
+ALL_NAV_PAGES = [
+    PAGE_OVERVIEW,
+    PAGE_CONFIG,
+    PAGE_DASHBOARD,
+    PAGE_SUBJECTS,
+    PAGE_STUDENTS,
+    PAGE_ATTENTION,
+    PAGE_REPORTS,
+    PAGE_HELP,
+]
+
+
 def _get_state(state: Optional[MutableMapping] = None) -> MutableMapping:
     """Return the provided session state mapping or default to st.session_state."""
     if state is not None:
@@ -36,6 +57,7 @@ def init_session_state(state: Optional[MutableMapping] = None) -> MutableMapping
     """Ensure all core session state keys are safely initialized."""
     s = _get_state(state)
     defaults = {
+        "current_page": PAGE_OVERVIEW,
         "raw_df": None,
         "dataset_name": None,
         "dataset_fingerprint": None,
@@ -108,7 +130,7 @@ def replace_active_dataset(
     s["gb_version"] = s.get("gb_version", 0) + 1
     # Clean up any lingering widget keys from previous datasets
     for k in list(s.keys()):
-        if any(k.startswith(prefix) for prefix in ("col_", "sel_subjs_", "max_m_", "pass_m_", "pol_", "inst_", "gb_", "preset_", "subj_pass_overrides_")):
+        if any(k.startswith(prefix) for prefix in ("col_", "sel_subjs_", "max_m_", "pass_m_", "pol_", "inst_", "gb_label_", "gb_min_", "preset_", "subj_pass_overrides_")):
             del s[k]
 
 
@@ -139,7 +161,7 @@ def handle_failed_upload(
     s["config_stale"] = False
     # Clean up lingering widget keys
     for k in list(s.keys()):
-        if any(k.startswith(prefix) for prefix in ("col_", "sel_subjs_", "max_m_", "pass_m_", "pol_", "inst_", "gb_", "preset_", "subj_pass_overrides_")):
+        if any(k.startswith(prefix) for prefix in ("col_", "sel_subjs_", "max_m_", "pass_m_", "pol_", "inst_", "gb_label_", "gb_min_", "preset_", "subj_pass_overrides_")):
             del s[k]
 
 

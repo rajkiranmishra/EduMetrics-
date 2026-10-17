@@ -3,6 +3,9 @@
 Covers:
 1. Unit tests for centralized session state helper functions.
 2. End-to-end Streamlit AppTest regressions for:
+   - Sidebar navigation across all 8 destinations.
+   - School and College 1-click quick demo onboarding.
+   - Direct upload navigation from homepage.
    - First-time dataset upload.
    - Uploading Dataset A and running analysis.
    - Replacing Dataset A with Dataset B.
@@ -15,6 +18,9 @@ Covers:
    - Normal Streamlit reruns without changing the dataset.
    - Complete session reset.
    - Independent sessions with different datasets.
+   - Preserving edits in custom grade boundary editor.
+   - Literal regex-safe student search.
+   - Reports and export downloads.
 3. Multi-threaded session concurrency isolation.
 """
 
@@ -27,6 +33,15 @@ from streamlit.testing.v1 import AppTest
 from core.grading import GradingPolicy, GradeBoundary, evaluate_students
 from core.analytics import compute_class_summary
 from core.session_state import (
+    PAGE_OVERVIEW,
+    PAGE_CONFIG,
+    PAGE_DASHBOARD,
+    PAGE_SUBJECTS,
+    PAGE_STUDENTS,
+    PAGE_ATTENTION,
+    PAGE_REPORTS,
+    PAGE_HELP,
+    ALL_NAV_PAGES,
     compute_dataset_fingerprint,
     init_session_state,
     clear_analysis_results,
@@ -62,6 +77,7 @@ def test_init_session_state_defaults():
     """Verify session state initializes all expected keys with safe defaults."""
     state = {}
     init_session_state(state)
+    assert state["current_page"] == PAGE_OVERVIEW
     assert state["raw_df"] is None
     assert state["dataset_name"] is None
     assert state["dataset_fingerprint"] is None
@@ -165,12 +181,14 @@ def test_reset_complete_workflow():
         "dataset_name": "file.csv",
         "uploader_key": 2,
         "evaluated_df": pd.DataFrame({"id": [1]}),
+        "current_page": PAGE_DASHBOARD,
     }
     reset_complete_workflow(state)
     assert state["raw_df"] is None
     assert state["dataset_name"] is None
     assert state["evaluated_df"] is None
     assert state["uploader_key"] == 3
+    assert state["current_page"] == PAGE_OVERVIEW
 
 
 def test_create_analysis_config_and_staleness():
@@ -187,14 +205,13 @@ def test_create_analysis_config_and_staleness():
         aggregate_pass_percentage=40.0,
         attendance_warning_threshold=75.0,
     )
-    # Identical config
     cfg1_same = create_analysis_config(
         dataset_fingerprint="fp123",
         student_id_col="student_id",
         name_col="name",
         attendance_col="att",
         department_col="dept",
-        selected_subjects=["Science", "Math"],  # Different order but sorted inside
+        selected_subjects=["Science", "Math"],
         subject_configs={"Science": 100.0, "Math": 100.0},
         subject_pass_percentage=40.0,
         aggregate_pass_percentage=40.0,
@@ -236,13 +253,96 @@ def _make_mock_file(filename: str, content: bytes):
     return mock
 
 
+def select_page(at: AppTest, page_name: str) -> AppTest:
+    """Select a sidebar navigation destination and rerun."""
+    at.sidebar.radio[0].set_value(page_name).run()
+    return at
+
+
+def get_button(at: AppTest, label_substr: str):
+    """Find a button semantically by case-insensitive substring."""
+    matches = [b for b in at.button if label_substr.lower() in b.label.lower()]
+    if not matches:
+        raise ValueError(
+            f"Button matching '{label_substr}' not found. Available buttons: {[b.label for b in at.button]}"
+        )
+    return matches[0]
+
+
+def get_sidebar_button(at: AppTest, label_substr: str):
+    """Find a sidebar button semantically by case-insensitive substring."""
+    matches = [b for b in at.sidebar.button if label_substr.lower() in b.label.lower()]
+    if not matches:
+        raise ValueError(
+            f"Sidebar button matching '{label_substr}' not found. Available: {[b.label for b in at.sidebar.button]}"
+        )
+    return matches[0]
+
+
+def test_sidebar_navigation_destinations():
+    """Verify that user can navigate across all 8 destinations via sidebar radio."""
+    at = AppTest.from_file("app.py")
+    at.run()
+    assert at.session_state["current_page"] == PAGE_OVERVIEW
+
+    for page in ALL_NAV_PAGES:
+        select_page(at, page)
+        assert not at.exception
+        assert at.session_state["current_page"] == page
+
+
+def test_school_quick_demo_onboarding():
+    """Verify 1-click School Demo on Homepage loads 20 students, runs analysis and lands on Dashboard."""
+    at = AppTest.from_file("app.py")
+    at.run()
+    assert at.session_state["current_page"] == PAGE_OVERVIEW
+
+    school_demo_btn = get_button(at, "Load & Analyze School Model")
+    school_demo_btn.click().run()
+
+    assert not at.exception
+    assert at.session_state["current_page"] == PAGE_DASHBOARD
+    assert at.session_state["dataset_name"] == "sample_school.csv"
+    assert at.session_state["evaluated_df"] is not None
+    assert len(at.session_state["evaluated_df"]) == 20
+    assert at.session_state["class_summary"].overall_pass_percentage == 80.0
+
+
+def test_college_quick_demo_onboarding():
+    """Verify 1-click College Demo on Homepage loads 25 students, applies college preset and evaluates."""
+    at = AppTest.from_file("app.py")
+    at.run()
+    assert at.session_state["current_page"] == PAGE_OVERVIEW
+
+    college_demo_btn = get_button(at, "Load & Analyze College Model")
+    college_demo_btn.click().run()
+
+    assert not at.exception
+    assert at.session_state["current_page"] == PAGE_DASHBOARD
+    assert at.session_state["dataset_name"] == "sample_college.csv"
+    assert at.session_state["evaluated_df"] is not None
+    assert len(at.session_state["evaluated_df"]) == 25
+    eval_grades = set(at.session_state["evaluated_df"]["grade"])
+    assert any(g in ["O", "E", "A"] for g in eval_grades)
+
+
+def test_direct_upload_navigation_from_homepage():
+    """Verify clicking 'Go to Dataset Upload & Config' routes to Upload & Configure page."""
+    at = AppTest.from_file("app.py")
+    at.run()
+    get_button(at, "Go to Dataset Upload & Config").click().run()
+    assert not at.exception
+    assert at.session_state["current_page"] == PAGE_CONFIG
+
+
 def test_first_time_dataset_upload():
-    """Verify first-time upload sets raw_df without generating unprompted analysis."""
+    """Verify first-time upload sets raw_df on Upload & Configure without unprompted analysis."""
     content = b"student_id,student_name,attendance,Math\nS01,Alice,95.0,90.0\nS02,Bob,85.0,75.0\n"
     mock_file = _make_mock_file("first_upload.csv", content)
 
     with patch("streamlit.file_uploader", return_value=mock_file):
         at = AppTest.from_file("app.py")
+        at.session_state["current_page"] = PAGE_CONFIG
         at.run()
         assert not at.exception
         assert at.session_state["raw_df"] is not None
@@ -259,8 +359,9 @@ def test_upload_dataset_a_and_run_analysis():
 
     with patch("streamlit.file_uploader", return_value=mock_file):
         at = AppTest.from_file("app.py")
+        at.session_state["current_page"] = PAGE_CONFIG
         at.run()
-        run_btn = [b for b in at.button if "Run Academic Analysis" in b.label][0]
+        run_btn = get_button(at, "Run Academic Analysis")
         run_btn.click().run()
 
         assert not at.exception
@@ -278,8 +379,9 @@ def test_replace_dataset_a_with_dataset_b():
 
     with patch("streamlit.file_uploader", return_value=file_a):
         at = AppTest.from_file("app.py")
+        at.session_state["current_page"] = PAGE_CONFIG
         at.run()
-        run_btn = [b for b in at.button if "Run Academic Analysis" in b.label][0]
+        run_btn = get_button(at, "Run Academic Analysis")
         run_btn.click().run()
         assert at.session_state["evaluated_df"] is not None
         assert at.session_state["dataset_name"] == "dataset_a.csv"
@@ -306,8 +408,9 @@ def test_upload_different_content_same_filename():
 
     with patch("streamlit.file_uploader", return_value=file_v1):
         at = AppTest.from_file("app.py")
+        at.session_state["current_page"] = PAGE_CONFIG
         at.run()
-        run_btn = [b for b in at.button if "Run Academic Analysis" in b.label][0]
+        run_btn = get_button(at, "Run Academic Analysis")
         run_btn.click().run()
         assert at.session_state["evaluated_df"] is not None
         assert len(at.session_state["evaluated_df"]) == 1
@@ -330,26 +433,25 @@ def test_switch_from_upload_to_builtin_sample_dataset():
     custom_file = _make_mock_file("custom.csv", custom_content)
 
     def mock_uploader(*args, **kwargs):
-        # Key starts at csv_uploader_0; when sample dataset is clicked, uploader_key is incremented to 1
         if kwargs.get("key") == "csv_uploader_0":
             return custom_file
         return None
 
     with patch("streamlit.file_uploader", side_effect=mock_uploader):
         at = AppTest.from_file("app.py")
+        at.session_state["current_page"] = PAGE_CONFIG
         at.run()
-        run_btn = [b for b in at.button if "Run Academic Analysis" in b.label][0]
+        run_btn = get_button(at, "Run Academic Analysis")
         run_btn.click().run()
         assert at.session_state["dataset_name"] == "custom.csv"
         assert at.session_state["evaluated_df"] is not None
 
-        # Now click the button to load the built-in School sample dataset
-        school_btn = [b for b in at.button if "Load Sample School Dataset" in b.label][0]
+        # Click the button to load the built-in School sample dataset
+        school_btn = get_button(at, "Load Sample School Dataset")
         school_btn.click().run()
 
         assert not at.exception
         assert at.session_state["dataset_name"] == "sample_school.csv"
-        # Prior custom analysis must be invalidated
         assert at.session_state["evaluated_df"] is None
         assert at.session_state["class_summary"] is None
         assert len(at.session_state["raw_df"]) == 20
@@ -362,8 +464,9 @@ def test_invalid_upload_after_successful_analysis():
 
     with patch("streamlit.file_uploader", return_value=valid_file):
         at = AppTest.from_file("app.py")
+        at.session_state["current_page"] = PAGE_CONFIG
         at.run()
-        run_btn = [b for b in at.button if "Run Academic Analysis" in b.label][0]
+        run_btn = get_button(at, "Run Academic Analysis")
         run_btn.click().run()
         assert at.session_state["evaluated_df"] is not None
 
@@ -374,7 +477,6 @@ def test_invalid_upload_after_successful_analysis():
     with patch("streamlit.file_uploader", return_value=invalid_file):
         at.run()
         assert not at.exception
-        # Stale results must NOT be visible under the rejected file
         assert at.session_state["evaluated_df"] is None
         assert at.session_state["raw_df"] is None
         assert at.session_state["dataset_name"] is None
@@ -385,34 +487,30 @@ def test_invalid_upload_after_successful_analysis():
 def test_changing_grading_thresholds_invalidates_analysis():
     """Verify editing passing thresholds after analysis invalidates results and prompts re-analysis."""
     at = AppTest.from_file("app.py")
+    at.session_state["current_page"] = PAGE_CONFIG
     at.run()
-    # Load sample school dataset
-    at.button[0].click().run()
-    run_btn = [b for b in at.button if "Run Academic Analysis" in b.label][0]
-    run_btn.click().run()
+    get_button(at, "Load Sample School Dataset").click().run()
+    get_button(at, "Run Academic Analysis").click().run()
     assert at.session_state["evaluated_df"] is not None
 
-    # Change subject passing threshold from 40 to 50
     thresh_input = [ni for ni in at.number_input if "Subject Passing Threshold" in ni.label][0]
     thresh_input.set_value(50.0).run()
 
     assert not at.exception
     assert at.session_state["evaluated_df"] is None
     assert at.session_state["config_stale"] is True
-    # Warning message displayed
     assert len(at.warning) > 0
 
 
 def test_changing_subject_maximum_marks_invalidates_analysis():
     """Verify modifying a subject's maximum marks invalidates previously evaluated results."""
     at = AppTest.from_file("app.py")
+    at.session_state["current_page"] = PAGE_CONFIG
     at.run()
-    at.button[0].click().run()
-    run_btn = [b for b in at.button if "Run Academic Analysis" in b.label][0]
-    run_btn.click().run()
+    get_button(at, "Load Sample School Dataset").click().run()
+    get_button(at, "Run Academic Analysis").click().run()
     assert at.session_state["evaluated_df"] is not None
 
-    # Change Mathematics Max from 100 to 75
     math_max_input = [ni for ni in at.number_input if "Mathematics Max" in ni.label][0]
     math_max_input.set_value(75.0).run()
 
@@ -424,13 +522,12 @@ def test_changing_subject_maximum_marks_invalidates_analysis():
 def test_changing_selected_subject_columns_invalidates_analysis():
     """Verify deselecting a subject column invalidates prior analysis results."""
     at = AppTest.from_file("app.py")
+    at.session_state["current_page"] = PAGE_CONFIG
     at.run()
-    at.button[0].click().run()
-    run_btn = [b for b in at.button if "Run Academic Analysis" in b.label][0]
-    run_btn.click().run()
+    get_button(at, "Load Sample School Dataset").click().run()
+    get_button(at, "Run Academic Analysis").click().run()
     assert at.session_state["evaluated_df"] is not None
 
-    # Remove one subject from multiselect
     subj_multiselect = at.multiselect[0]
     current_subjs = subj_multiselect.value
     subj_multiselect.set_value(current_subjs[:-1]).run()
@@ -443,14 +540,13 @@ def test_changing_selected_subject_columns_invalidates_analysis():
 def test_normal_rerun_preserves_analysis():
     """Verify regular Streamlit reruns without configuration changes do NOT reset analysis."""
     at = AppTest.from_file("app.py")
+    at.session_state["current_page"] = PAGE_CONFIG
     at.run()
-    at.button[0].click().run()
-    run_btn = [b for b in at.button if "Run Academic Analysis" in b.label][0]
-    run_btn.click().run()
+    get_button(at, "Load Sample School Dataset").click().run()
+    get_button(at, "Run Academic Analysis").click().run()
     assert at.session_state["evaluated_df"] is not None
     pass_pct = at.session_state["class_summary"].overall_pass_percentage
 
-    # Trigger multiple ordinary reruns
     at.run()
     assert at.session_state["evaluated_df"] is not None
     assert at.session_state["class_summary"].overall_pass_percentage == pass_pct
@@ -463,15 +559,14 @@ def test_normal_rerun_preserves_analysis():
 def test_complete_session_reset():
     """Verify 'Start New Analysis / Reset' button clears all analysis and bumps uploader key."""
     at = AppTest.from_file("app.py")
+    at.session_state["current_page"] = PAGE_CONFIG
     at.run()
-    at.button[0].click().run()
-    run_btn = [b for b in at.button if "Run Academic Analysis" in b.label][0]
-    run_btn.click().run()
+    get_button(at, "Load Sample School Dataset").click().run()
+    get_button(at, "Run Academic Analysis").click().run()
     assert at.session_state["evaluated_df"] is not None
 
-    # Click Reset in sidebar
     prev_key = at.session_state["uploader_key"]
-    reset_btn = [b for b in at.sidebar.button if "Reset" in b.label][0]
+    reset_btn = get_sidebar_button(at, "Reset")
     reset_btn.click().run()
 
     assert not at.exception
@@ -479,32 +574,29 @@ def test_complete_session_reset():
     assert at.session_state["raw_df"] is None
     assert at.session_state["dataset_name"] is None
     assert at.session_state["uploader_key"] == prev_key + 1
+    assert at.session_state["current_page"] == PAGE_OVERVIEW
 
 
 def test_independent_sessions_with_different_datasets():
     """Verify distinct AppTest sessions operate with total isolation and zero data crossover."""
     at_school = AppTest.from_file("app.py")
     at_college = AppTest.from_file("app.py")
+    at_school.session_state["current_page"] = PAGE_CONFIG
+    at_college.session_state["current_page"] = PAGE_CONFIG
 
     at_school.run()
     at_college.run()
 
-    # Session 1: School
-    at_school.button[0].click().run()
-    run_school = [b for b in at_school.button if "Run Academic Analysis" in b.label][0]
-    run_school.click().run()
+    get_button(at_school, "Load Sample School Dataset").click().run()
+    get_button(at_school, "Run Academic Analysis").click().run()
 
-    # Session 2: College
-    at_college.button[1].click().run()
-    run_college = [b for b in at_college.button if "Run Academic Analysis" in b.label][0]
-    run_college.click().run()
+    get_button(at_college, "Load Sample College Dataset").click().run()
+    get_button(at_college, "Run Academic Analysis").click().run()
 
-    # Verify Session 1
     assert at_school.session_state["dataset_name"] == "sample_school.csv"
     assert len(at_school.session_state["evaluated_df"]) == 20
     assert at_school.session_state["evaluated_df"].iloc[0]["student_id"].startswith("SCH-")
 
-    # Verify Session 2
     assert at_college.session_state["dataset_name"] == "sample_college.csv"
     assert len(at_college.session_state["evaluated_df"]) == 25
     assert at_college.session_state["evaluated_df"].iloc[0]["student_id"] == "001"
@@ -517,7 +609,6 @@ def test_independent_sessions_with_different_datasets():
 def simulate_user_session(dataset_id: int) -> dict:
     """Simulate an independent user session performing an academic evaluation."""
     if dataset_id == 1:
-        # Session 1: High-performing cohort
         df = pd.DataFrame({
             "student_id": [f"U1_S0{i}" for i in range(1, 6)],
             "student_name": [f"User1_Student_{i}" for i in range(1, 6)],
@@ -526,7 +617,6 @@ def simulate_user_session(dataset_id: int) -> dict:
         })
         policy = GradingPolicy(subject_pass_percentage=50.0, aggregate_pass_percentage=50.0)
     else:
-        # Session 2: Lower-performing cohort
         df = pd.DataFrame({
             "student_id": [f"U2_S0{i}" for i in range(1, 6)],
             "student_name": [f"User2_Student_{i}" for i in range(1, 6)],
@@ -582,12 +672,12 @@ def test_same_file_uploaded_repeatedly_preserves_analysis():
 
     with patch("streamlit.file_uploader", return_value=file_obj):
         at = AppTest.from_file("app.py")
+        at.session_state["current_page"] = PAGE_CONFIG
         at.run()
-        run_btn = [b for b in at.button if "Run Academic Analysis" in b.label][0]
+        run_btn = get_button(at, "Run Academic Analysis")
         run_btn.click().run()
         assert at.session_state["evaluated_df"] is not None
 
-        # Rerun with the exact same file in uploader
         at.run()
         assert not at.exception
         assert at.session_state["evaluated_df"] is not None
@@ -596,7 +686,7 @@ def test_same_file_uploaded_repeatedly_preserves_analysis():
 
 def test_invalid_upload_followed_by_valid_upload():
     """Verify recovering from a rejected upload by submitting a valid CSV cleanly resets state."""
-    invalid_content = b"header1,header1\nval1,val2\n"  # duplicate headers
+    invalid_content = b"header1,header1\nval1,val2\n"
     invalid_file = _make_mock_file("invalid.csv", invalid_content)
 
     valid_content = b"student_id,student_name,attendance,Math\nS01,Alice,95.0,90.0\n"
@@ -609,12 +699,12 @@ def test_invalid_upload_followed_by_valid_upload():
 
     with patch("streamlit.file_uploader", side_effect=mock_uploader):
         at = AppTest.from_file("app.py")
+        at.session_state["current_page"] = PAGE_CONFIG
         at.run()
         assert at.session_state["upload_error"] is not None
         assert at.session_state["raw_df"] is None
         assert at.session_state["evaluated_df"] is None
 
-        # Now user fixes the file and uploads valid CSV
         current_file = valid_file
         at.run()
         assert not at.exception
@@ -622,9 +712,7 @@ def test_invalid_upload_followed_by_valid_upload():
         assert at.session_state["raw_df"] is not None
         assert len(at.session_state["raw_df"]) == 1
 
-        # User runs analysis
-        run_btn = [b for b in at.button if "Run Academic Analysis" in b.label][0]
-        run_btn.click().run()
+        get_button(at, "Run Academic Analysis").click().run()
         assert at.session_state["evaluated_df"] is not None
 
 
@@ -634,34 +722,33 @@ def test_reset_button_after_failed_upload():
     invalid_file = _make_mock_file("bad.csv", invalid_content)
 
     def mock_uploader(*args, **kwargs):
-        # Return bad file initially, return None after uploader_key increments on reset
         if kwargs.get("key") == "csv_uploader_0":
             return invalid_file
         return None
 
     with patch("streamlit.file_uploader", side_effect=mock_uploader):
         at = AppTest.from_file("app.py")
+        at.session_state["current_page"] = PAGE_CONFIG
         at.run()
         assert at.session_state["upload_error"] is not None
 
-        # Click Reset in sidebar
-        reset_btn = [b for b in at.sidebar.button if "Reset" in b.label][0]
+        reset_btn = get_sidebar_button(at, "Reset")
         reset_btn.click().run()
 
         assert not at.exception
         assert at.session_state["upload_error"] is None
         assert at.session_state["raw_df"] is None
         assert at.session_state["evaluated_df"] is None
+        assert at.session_state["current_page"] == PAGE_OVERVIEW
 
 
 def test_consecutive_grading_threshold_changes_and_reanalysis():
     """Verify modifying multiple institutional policy settings consecutively and re-evaluating."""
     at = AppTest.from_file("app.py")
+    at.session_state["current_page"] = PAGE_CONFIG
     at.run()
-    # Load school sample
-    at.button[0].click().run()
-    run_btn = [b for b in at.button if "Run Academic Analysis" in b.label][0]
-    run_btn.click().run()
+    get_button(at, "Load Sample School Dataset").click().run()
+    get_button(at, "Run Academic Analysis").click().run()
     assert at.session_state["evaluated_df"] is not None
 
     # Change 1: Subject passing threshold to 50
@@ -683,8 +770,7 @@ def test_consecutive_grading_threshold_changes_and_reanalysis():
     assert at.session_state["config_stale"] is True
 
     # Re-run analysis
-    run_btn = [b for b in at.button if "Run Academic Analysis" in b.label][0]
-    run_btn.click().run()
+    get_button(at, "Run Academic Analysis").click().run()
 
     assert not at.exception
     assert at.session_state["evaluated_df"] is not None
@@ -697,23 +783,24 @@ def test_consecutive_grading_threshold_changes_and_reanalysis():
 def test_widget_state_isolation_across_dataset_swaps():
     """Verify switching between datasets isolates column mappings and subject settings cleanly."""
     at = AppTest.from_file("app.py")
+    at.session_state["current_page"] = PAGE_CONFIG
     at.run()
 
     # Load School (uniform 100-mark format)
-    at.button[0].click().run()
+    get_button(at, "Load Sample School Dataset").click().run()
     school_subjs = at.multiselect[0].value
     assert "English" in school_subjs
     assert "Mathematics" in school_subjs
 
     # Load College (heterogeneous marks with labs)
-    at.button[1].click().run()
+    get_button(at, "Load Sample College Dataset").click().run()
     college_subjs = at.multiselect[0].value
     assert "Data_Structures" in college_subjs
     assert "Database_Lab" in college_subjs
     assert "English" not in college_subjs
 
     # Switch back to School
-    at.button[0].click().run()
+    get_button(at, "Load Sample School Dataset").click().run()
     reloaded_school_subjs = at.multiselect[0].value
     assert "English" in reloaded_school_subjs
     assert "Database_Lab" not in reloaded_school_subjs
@@ -726,21 +813,15 @@ def test_streamlit_validation_error_display_on_non_finite_marks():
 
     with patch("streamlit.file_uploader", return_value=file_obj):
         at = AppTest.from_file("app.py")
+        at.session_state["current_page"] = PAGE_CONFIG
         at.run()
 
-        # Click Run Academic Analysis
-        run_btn = [b for b in at.button if "Run Academic Analysis" in b.label][0]
-        run_btn.click().run()
+        get_button(at, "Run Academic Analysis").click().run()
 
         assert not at.exception
         assert at.session_state["evaluated_df"] is None
-        # Check error was rendered
         assert any("Validation Failed" in err.value for err in at.error)
 
-
-# =============================================================================
-# FIX 03: SESSION CONFIGURATION INTEGRITY & PRESET SWITCHING TESTS
-# =============================================================================
 
 def test_fix03_config_staleness_on_policy_and_metadata_modifications():
     """Verify that changing grade boundaries, overrides, attendance toggle, or metadata invalidates analysis results."""
@@ -787,10 +868,11 @@ def test_fix03_config_staleness_on_policy_and_metadata_modifications():
 def test_apptest_institution_metadata_and_custom_preset_flow():
     """Verify end-to-end Streamlit UI flow: applying College preset and configuring institution details."""
     at = AppTest.from_file("app.py")
+    at.session_state["current_page"] = PAGE_CONFIG
     at.run()
 
     # 1. Load built-in School sample dataset
-    at.button[0].click().run()
+    get_button(at, "Load Sample School Dataset").click().run()
     assert at.session_state["raw_df"] is not None
 
     # 2. Configure institution metadata in text inputs
@@ -804,7 +886,7 @@ def test_apptest_institution_metadata_and_custom_preset_flow():
     preset_sel = [sb for sb in at.selectbox if "Select Sample Preset" in sb.label][0]
     preset_sel.select("Example College").run()
 
-    apply_btn = [b for b in at.button if "Apply Preset" in b.label][0]
+    apply_btn = get_button(at, "Apply Preset")
     apply_btn.click().run()
 
     # Verify custom_boundaries updated to College preset
@@ -814,7 +896,7 @@ def test_apptest_institution_metadata_and_custom_preset_flow():
     assert "A" in labels
 
     # 4. Run Academic Analysis
-    run_btn = [b for b in at.button if "Run Academic Analysis" in b.label][0]
+    run_btn = get_button(at, "Run Academic Analysis")
     run_btn.click().run()
 
     assert not at.exception
@@ -822,7 +904,6 @@ def test_apptest_institution_metadata_and_custom_preset_flow():
     assert at.session_state["institution_metadata"].institution_name == "Oxford International Academy"
     assert at.session_state["institution_metadata"].program_name == "Class 10"
 
-    # College preset grades should be present in evaluated records
     eval_grades = set(at.session_state["evaluated_df"]["grade"])
     assert any(g in ["O", "E", "A"] for g in eval_grades)
 
@@ -830,61 +911,54 @@ def test_apptest_institution_metadata_and_custom_preset_flow():
 def test_grade_boundary_editor_preserves_user_edits_on_add_tier():
     """Verify that editing a grade boundary label/percentage and then adding a tier preserves edits."""
     at = AppTest.from_file("app.py")
+    at.session_state["current_page"] = PAGE_CONFIG
     at.run()
 
-    # Load School sample dataset
-    at.button[0].click().run()
+    get_button(at, "Load Sample School Dataset").click().run()
     assert at.session_state["raw_df"] is not None
 
-    # Find the first grade label input and modify it to "Distinction"
     label_input = [ti for ti in at.text_input if "Grade 1 Label" in ti.label][0]
     label_input.set_value("Distinction").run()
 
-    # Now click "➕ Add Grade Level"
-    add_btn = [b for b in at.button if "Add Grade Level" in b.label][0]
+    add_btn = get_button(at, "Add Grade Level")
     add_btn.click().run()
 
     assert not at.exception
-    # Verify that the edited label "Distinction" was preserved in custom_boundaries!
     bounds = at.session_state["custom_boundaries"]
     assert bounds[0].label == "Distinction"
-    # And that a new tier was added
-    assert len(bounds) == 8  # Default EduMetrics has 7 tiers, +1 tier = 8
+    assert len(bounds) == 8
 
 
 def test_grade_boundary_editor_preserves_user_edits_on_remove_tier():
     """Verify that editing a grade boundary label and then removing a tier preserves edits."""
     at = AppTest.from_file("app.py")
+    at.session_state["current_page"] = PAGE_CONFIG
     at.run()
 
-    # Load School sample dataset
-    at.button[0].click().run()
+    get_button(at, "Load Sample School Dataset").click().run()
     assert at.session_state["raw_df"] is not None
 
-    # Find the first grade label input and modify it to "Distinction"
     label_input = [ti for ti in at.text_input if "Grade 1 Label" in ti.label][0]
     label_input.set_value("Distinction").run()
 
-    # Click "➖ Remove Grade Level"
-    rem_btn = [b for b in at.button if "Remove Grade Level" in b.label][0]
+    rem_btn = get_button(at, "Remove Grade Level")
     rem_btn.click().run()
 
     assert not at.exception
     bounds = at.session_state["custom_boundaries"]
     assert bounds[0].label == "Distinction"
-    assert len(bounds) == 6  # 7 tiers - 1 = 6
+    assert len(bounds) == 6
 
 
 def test_grade_boundary_editor_add_tier_at_low_percentage_avoids_duplicate():
     """Verify that adding tiers when preceding tier is <= 20% strictly decreases and avoids duplicates."""
     at = AppTest.from_file("app.py")
+    at.session_state["current_page"] = PAGE_CONFIG
     at.run()
 
-    # Load School sample dataset
-    at.button[0].click().run()
+    get_button(at, "Load Sample School Dataset").click().run()
     assert at.session_state["raw_df"] is not None
 
-    # Set boundaries with a very low tier (e.g. 10.0%)
     at.session_state["custom_boundaries"] = [
         GradeBoundary("Top", 90.0),
         GradeBoundary("Mid", 50.0),
@@ -894,12 +968,11 @@ def test_grade_boundary_editor_add_tier_at_low_percentage_avoids_duplicate():
     at.session_state["gb_version"] = 10
     at.run()
 
-    add_btn = [b for b in at.button if "Add Grade Level" in b.label][0]
+    add_btn = get_button(at, "Add Grade Level")
     add_btn.click().run()
 
     assert not at.exception
     bounds = at.session_state["custom_boundaries"]
-    # Check all percentages are strictly decreasing
     pcts = [b.min_percentage for b in bounds]
     for i in range(len(pcts) - 1):
         assert pcts[i] > pcts[i + 1]
@@ -908,17 +981,15 @@ def test_grade_boundary_editor_add_tier_at_low_percentage_avoids_duplicate():
 def test_student_search_special_characters_regex_safety():
     """Verify that searching with regex metacharacters does not raise unhandled exceptions."""
     at = AppTest.from_file("app.py")
+    at.session_state["current_page"] = PAGE_CONFIG
     at.run()
 
-    # Load School sample dataset
-    at.button[0].click().run()
-
-    # Run Analysis
-    run_btn = [b for b in at.button if "Run Academic Analysis" in b.label][0]
-    run_btn.click().run()
+    get_button(at, "Load Sample School Dataset").click().run()
+    get_button(at, "Run Academic Analysis").click().run()
     assert at.session_state["evaluated_df"] is not None
 
-    # Search with regex metacharacters that would crash re.compile if regex=True
+    # Navigate to Student Explorer page
+    select_page(at, PAGE_STUDENTS)
     search_inputs = [ti for ti in at.text_input if "Search by Student Name" in ti.label]
     assert len(search_inputs) > 0
     search_box = search_inputs[0]
@@ -928,3 +999,22 @@ def test_student_search_special_characters_regex_safety():
         assert not at.exception, f"Crash encountered with search query: {special_query}"
 
 
+def test_reports_and_export_download_generation():
+    """Verify that Reports & Export view renders sanitized CSV and text summary reports."""
+    at = AppTest.from_file("app.py")
+    at.session_state["current_page"] = PAGE_CONFIG
+    at.run()
+
+    get_button(at, "Load Sample School Dataset").click().run()
+    get_button(at, "Run Academic Analysis").click().run()
+    assert at.session_state["evaluated_df"] is not None
+
+    select_page(at, PAGE_REPORTS)
+    assert not at.exception
+    # Verify subheaders and report preview text are rendered on the Reports page
+    subheaders = [sh.value for sh in at.subheader]
+    assert any("Sanitized Analyzed CSV" in s for s in subheaders)
+    assert any("Summary Text Audit Report" in s for s in subheaders)
+    assert any("Report Preview" in s for s in subheaders)
+    assert len(at.text) > 0
+    assert "EDUMETRICS ACADEMIC PERFORMANCE REPORT" in at.text[0].value

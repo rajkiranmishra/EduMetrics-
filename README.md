@@ -4,7 +4,7 @@
 [![EduMetrics CI](https://github.com/rajkiranmishra/private/actions/workflows/ci.yml/badge.svg)](https://github.com/rajkiranmishra/private/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://www.python.org/)
-[![Tests: 134 Passed](https://img.shields.io/badge/Tests-134%20Passed-success.svg)](docs/TEST_REPORT.md)
+[![Tests: 139 Passed](https://img.shields.io/badge/Tests-139%20Passed-success.svg)](docs/TEST_REPORT.md)
 
 **EduMetrics** is a production-minded academic analytics platform that empowers teachers, professors, and academic coordinators to validate student performance datasets, configure institutional grading policies, compute statistical cohort distributions, and export sanitized reports without requiring spreadsheet programming.
 
@@ -185,22 +185,21 @@ streamlit run app.py
 
 Open your browser at `http://localhost:8501`.
 
-### Web Workflow & Configuration Layout:
-1. **Overview & Samples:** Read the privacy notice and download sample CSV templates.
-2. **Upload & Configure:** Upload your CSV (or load a sample with 1 click). Configuration is structured into 7 clean sections:
-   - **Section 1 — Institution Details:** (Optional) Institution name, academic level (School/College/University/Other), program name, and academic term.
-   - **Section 2 — Column Mapping:** Map Student ID, Name, Department, and Attendance columns.
-   - **Section 3 — Subject Configuration:** Detects subjects dynamically, allows setting custom maximum marks (e.g. 100 for theory, 50 for lab) and optional per-subject passing thresholds.
-   - **Section 4 — Grading Policy:** Choose an institutional preset (`Default EduMetrics`, `Example School`, `Example College`) or customize boundaries. Add or remove grade tiers (2 to 12) with real-time validation.
-   - **Section 5 — Attendance Policy:** Configure the warning threshold percentage and toggle attendance warning indicators on/off.
-   - **Section 6 — Policy Preview:** Live summary card displaying active grade tiers, pass thresholds, and warning rules before running analysis.
-   - **Section 7 — Run Analysis:** Validates and executes calculations. Any change to settings automatically marks results stale to ensure integrity.
-3. **Performance Dashboard:** View class averages, pass rates, grade distribution charts, and leaderboards.
-4. **Subject Analysis:** Inspect pass rates, averages, and difficulty rankings per subject.
-5. **Student Explorer:** Search, filter, and sort student-level performance records.
+### Web Workflow & Navigation:
+EduMetrics features a responsive sidebar navigation system with 8 destinations:
+1. **Overview & Quick Start:** Concise privacy notice and 1-click quick start demonstrations for School and College models.
+2. **Upload & Configure:** Upload CSVs or select built-in datasets with a structured 4-group workflow:
+   - **Group 1 — Dataset Upload & Column Mapping:** Ingest CSV and configure column mapping for Student ID, Name, Department, and Attendance.
+   - **Group 2 — Subject Marks & Passing Rules:** Dynamic subject detection, maximum achievable marks (100 for theory, 50 for lab), and optional per-subject passing cutoffs.
+   - **Group 3 — Institution & Grading Policies:** Set passing thresholds, configure attendance warnings, select presets (`Default EduMetrics`, `Example School`, `Example College`), edit grade tiers (2 to 12 levels), and enter optional institutional metadata.
+   - **Group 4 — Policy Preview & Run Analysis:** Real-time policy snapshot, stale configuration warning, and 1-click analysis execution.
+3. **Performance Dashboard:** View KPI metric cards, pass rates, sorted letter grade distribution charts, and deterministic leaderboards.
+4. **Subject Analysis:** Inspect pass rates, averages, and curriculum difficulty rankings per course.
+5. **Student Explorer:** Search (literal, regex-safe), filter by department or pass/fail, and sort student-level performance records.
 6. **Academic Attention:** Review students flagged for conceptual tutoring, chronic absenteeism, or subject remediation.
-7. **Reports & Export:** Download sanitized CSV reports (with formula defusion) and comprehensive text summaries containing institutional metadata.
-8. **Reset Session:** Click "Start New Analysis / Reset" to clear all session memory.
+7. **Reports & Export:** Download sanitized CSV reports (with formula defusion) and comprehensive text summaries.
+8. **Help & Methodology:** Review mathematical formulas, normalization rules, and privacy architecture.
+9. **Reset Session:** Click "Start New Analysis / Reset" in the sidebar to cleanly clear all transient session memory.
 
 ---
 

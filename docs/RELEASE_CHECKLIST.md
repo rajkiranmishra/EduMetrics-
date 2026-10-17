@@ -14,11 +14,11 @@
 | Gate | Category | Description | Status | Sign-Off / Evidence |
 | :---: | :--- | :--- | :---: | :--- |
 | **G1** | **Code Integrity** | Fixes 01–04 implemented and verified | ✅ **PASSED** | Commits `46ed7ef` to `5f3dc4b` |
-| **G2** | **Automated Tests** | 100% pass rate on test suite | ✅ **PASSED** | 134 passed in 3.48s |
+| **G2** | **Automated Tests** | 100% pass rate on test suite | ✅ **PASSED** | 139 passed in 5.23s |
 | **G3** | **CLI Operations** | Headless CLI operates on all datasets | ✅ **PASSED** | `main.py` verified on School & College |
-| **G4** | **CI Workflow** | GitHub Actions matrix on Python 3.9, 3.10, 3.11 | ✅ **PASSED** | `.github/workflows/ci.yml` verified |
+| **G4** | **CI Workflow** | GitHub Actions matrix on Python 3.9, 3.10, 3.11 | ✅ **PASSED** | `.github/workflows/ci.yml` (main, fix/*, ui/*) |
 | **G5** | **Security & Privacy** | Zero secrets, CWE-1236 defusion, 2MB limit | ✅ **PASSED** | STRIDE review & upload checks |
-| **G6** | **UI Robustness** | AppTest regressions on session & UI controls | ✅ **PASSED** | Special char search, tier editor verified |
+| **G6** | **UI Robustness** | AppTest regressions on session & UI controls | ✅ **PASSED** | Sidebar nav, 1-click demos, 4-step config |
 | **G7** | **Documentation** | All operational & academic manuals published | ✅ **PASSED** | 8 comprehensive documents in `docs/` |
 | **G8** | **Academic Package** | EWB Courses assignment deliverables complete | ✅ **PASSED** | Verified in `submission/` & docs |
 | **G9** | **Public Deployment** | Streamlit Community Cloud configuration ready | ⏳ **USER ACTION** | Awaiting authorized GitHub connect |
@@ -26,17 +26,20 @@
 
 ---
 
-## 1. Code Integrity & Bugfix Verification (Fix 01–04)
+## 1. Code Integrity & Bugfix Verification (Fix 01–04 & UI-02)
 
 - [x] **Fix 01 — Stale Analysis Invalidation:** Modifying dataset, column mapping, maximum marks, or grading thresholds automatically invalidates active results and marks state stale. *(Verified in `test_sessions.py`)*
 - [x] **Fix 02 — Data Validation & Non-Finite Numbers:** Rejects `NaN`, `Inf`, `-Inf`, unparseable values, duplicate IDs, and malformed CSVs with row-level diagnostics. *(Verified in `test_validation.py`)*
 - [x] **Fix 03 — Configurable Policies & Metadata:** Supports institution metadata, sample presets (`School`, `College`), per-subject pass thresholds, and dynamic grade boundaries. *(Verified in `test_grading.py`)*
 - [x] **Fix 04 — Security & Session Isolation:** Defensive formula defusion, input length bounds, filename sanitization, and multi-threaded session concurrency isolation. *(Verified in `test_security.py`)*
-- [x] **Regression Hardening (Phase 1 Audit):**
-  - [x] Relative paths anchored to `BASE_DIR = os.path.dirname(os.path.abspath(__file__))`.
-  - [x] Special characters in student search handled safely via `regex=False, na=False`.
-  - [x] Dynamic half-step boundary calculation when adding tiers below 20% to prevent duplicate percentages.
-  - [x] Preserved user-edited labels and percentages when removing grade levels.
+- [x] **UI-02 — Educator Interface & Navigation Polish:**
+  - [x] Streamlit-native sidebar navigation replacing crowded horizontal `st.tabs`.
+  - [x] 1-Click quick start demonstrations for School and College models on Homepage.
+  - [x] Streamlined 4-group configuration layout with progressive disclosure.
+  - [x] Compact, non-intrusive privacy notice with expandable data protection details.
+  - [x] Polished dashboard KPI cards, monotonically ordered grade charts, and difficulty rankings.
+  - [x] Literal regex-safe student search matching (`regex=False, na=False`).
+  - [x] AppTest regression suite updated to semantic selectors (139 passing tests).
 
 ---
 
@@ -47,23 +50,23 @@
 platform darwin -- Python 3.9.6, pytest-8.4.2, pluggy-1.6.0
 rootdir: /Users/rajkiranmishra/private
 configfile: pyproject.toml / setup.cfg
-collected 134 items
+collected 139 items
 
-tests/test_analytics.py .................................................... [ 39%]
-tests/test_cli.py ......                                                     [ 43%]
-tests/test_grading.py ....................................................   [ 82%]
-tests/test_loader.py .............                                           [ 92%]
-tests/test_reports.py ..                                                     [ 93%]
-tests/test_security.py .............                                         [100%]
-tests/test_sessions.py ..................................................... [100%]
+tests/test_analytics.py .................................................... [ 37%]
+tests/test_cli.py ......                                                     [ 42%]
+tests/test_grading.py ....................................................   [ 79%]
+tests/test_loader.py .............                                           [ 88%]
+tests/test_reports.py ..                                                     [ 89%]
+tests/test_security.py .............                                         [ 96%]
+tests/test_sessions.py ..................................................... [ 99%]
 tests/test_validation.py ...............                                     [100%]
 
-============================= 134 passed in 3.48s ==============================
+============================= 139 passed in 5.23s ==============================
 ```
 
-- [x] **Zero Failed Tests:** 134 passed, 0 failed, 0 skipped.
+- [x] **Zero Failed Tests:** 139 passed, 0 failed, 0 skipped.
 - [x] **Zero Flaky Tests:** Concurrency tests executed with 4 parallel threads.
-- [x] **Execution Speed:** Full test suite executes in under 4 seconds.
+- [x] **Execution Speed:** Full test suite executes in ~5 seconds.
 
 ---
 

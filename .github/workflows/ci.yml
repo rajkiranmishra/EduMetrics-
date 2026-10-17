@@ -2,7 +2,7 @@ name: EduMetrics CI
 
 on:
   push:
-    branches: [ main, "fix/*" ]
+    branches: [ main, "fix/*", "ui/*" ]
   pull_request:
     branches: [ main ]
 

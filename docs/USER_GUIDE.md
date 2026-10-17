@@ -10,14 +10,16 @@
 1. [Overview & Core Philosophy](#1-overview--core-philosophy)
 2. [Data Preparation & CSV Specifications](#2-data-preparation--csv-specifications)
 3. [Interactive Web Dashboard Guide](#3-interactive-web-dashboard-guide)
-   - [Tab 1: Overview & Samples](#tab-1-overview--samples)
-   - [Tab 2: Ingestion & Configuration (7-Section Workflow)](#tab-2-ingestion--configuration-7-section-workflow)
-   - [Tab 3: Academic Performance Dashboard](#tab-3-academic-performance-dashboard)
-   - [Tab 4: Subject Analytics & Difficulty Rankings](#tab-4-subject-analytics--difficulty-rankings)
-   - [Tab 5: Student Explorer & Filter](#tab-5-student-explorer--filter)
-   - [Tab 6: Academic Attention Indicators](#tab-6-academic-attention-indicators)
-   - [Tab 7: Reports & Export](#tab-7-reports--export)
-   - [Tab 8: Help & Methodology](#tab-8-help--methodology)
+   - [3.1 Streamlit-Native Sidebar Navigation](#31-streamlit-native-sidebar-navigation)
+   - [3.2 View-by-View Walkthrough](#32-view-by-view-walkthrough)
+     - [View 1: Overview & Quick Start](#view-1-overview--quick-start)
+     - [View 2: Dataset Upload & Configuration (4-Step Workflow)](#view-2-dataset-upload--configuration-4-step-workflow)
+     - [View 3: Academic Performance Dashboard](#view-3-academic-performance-dashboard)
+     - [View 4: Subject Analytics & Difficulty Rankings](#view-4-subject-analytics--difficulty-rankings)
+     - [View 5: Student Explorer & Filter](#view-5-student-explorer--filter)
+     - [View 6: Academic Attention Indicators](#view-6-academic-attention-indicators)
+     - [View 7: Reports & Export](#view-7-reports--export)
+     - [View 8: Help & Methodology](#view-8-help--methodology)
 4. [Standalone CLI Execution Guide](#4-standalone-cli-execution-guide)
 5. [Understanding Academic Attention Heuristics](#5-understanding-academic-attention-heuristics)
 6. [Data Privacy, Security & Formula Injection Defense](#6-data-privacy-security--formula-injection-defense)
@@ -61,66 +63,86 @@ Your CSV file must include columns representing:
 
 ## 3. Interactive Web Dashboard Guide
 
-Launch the web app with:
+Launch the web app locally with:
 ```bash
 streamlit run app.py
 ```
-Then navigate through the 8 tabs described below:
+Or access the hosted live version at: **[https://edumetrics-raj.streamlit.app/](https://edumetrics-raj.streamlit.app/)**
 
-### Tab 1: Overview & Samples
-- Read the system summary and active privacy advisory.
-- Download the built-in reference CSV templates:
-  - **Sample 1 (K-12 School Model):** 20 students, uniform 100-mark scoring scale.
-  - **Sample 2 (University Engineering Model):** 25 students, leading-zero IDs (`"001"`), mixed 100-mark theory and 50-mark lab courses.
+### 3.1 Streamlit-Native Sidebar Navigation
+EduMetrics uses a clean, responsive sidebar navigation system organized into 8 destinations:
+1. **🏠 Overview & Quick Start:** Introduction and 1-click demonstration workflows.
+2. **⚙️ Upload & Configure:** File ingestion, column mapping, and academic policy rules.
+3. **📊 Performance Dashboard:** High-level KPIs, grade distribution, and statistical metrics.
+4. **📚 Subject Analysis:** Course-wise pass rates, average marks, and curriculum difficulty ranking.
+5. **🔍 Student Explorer:** Individual student records with literal-text search and filters.
+6. **⚠️ Academic Attention:** Transparent, rule-based indicators for students needing pastoral/academic support.
+7. **📥 Reports & Export:** Sanitized CSV (formula injection defused) and ASCII audit reports.
+8. **ℹ️ Help & Methodology:** Mathematical formulas, grading rules, and privacy documentation.
 
-### Tab 2: Ingestion & Configuration (7-Section Workflow)
-This is your primary configuration workspace. It is structured into 7 logical sections:
+---
 
-1. **Section 1 — Institution Details:** (Optional) Enter your institution name, academic level (School, College, University, Other), program or class name, and semester/term.
-2. **Section 2 — Column Mapping:** The system automatically inspects your CSV headers and recommends mappings for Student ID, Name, Attendance, and Department. Confirm or adjust these selections.
-3. **Section 3 — Subject Configuration:** Select which course columns to include in the evaluation. Specify the maximum achievable marks for each course (e.g. 100 for theory, 50 for lab). If different courses have different pass cutoffs, check **"Configure subject-specific passing thresholds"**.
-4. **Section 4 — Grading Policy:**
-   - Set the default **Subject Passing Threshold (%)** (default: 40%).
-   - Set the **Aggregate Passing Threshold (%)** (default: 40%).
-   - Select an institutional preset (`Default EduMetrics`, `Example School`, `Example College`) or customize grade labels and minimum percentages directly.
-   - Use **"➕ Add Grade Level"** or **"➖ Remove Grade Level"** to adjust the number of tiers (supports 2 to 12 levels).
-5. **Section 5 — Attendance Policy:**
-   - Configure the attendance shortage threshold (default: `< 75%`).
-   - Toggle the warning indicator on or off. Note: Attendance warnings are pastoral advisories and do not cause course failure.
-6. **Section 6 — Policy Preview:** Live summary table displaying all active grade brackets, score ranges, and passing criteria before running calculations.
-7. **Section 7 — Run Analysis:**
-   - Click **"🚀 Run Academic Analysis"** to validate records and execute the analytics engine.
-   - Any modification to column mappings or grading settings marks active analysis stale to guarantee data integrity.
+### 3.2 View-by-View Walkthrough
 
-### Tab 3: Academic Performance Dashboard
-- **Top Metric Cards:** Instant view of Total Enrolled, Overall Pass Rate, Class Average Score, Class Median Score, Mean Attendance, Attendance Shortages, and Class Topper.
-- **Grade Distribution Chart:** Interactive bar chart displaying the frequency of each assigned letter grade.
-- **Statistical Overview:** Detailed table with variance, standard deviation, and highest/lowest score records.
-- **Top Performers Leaderboard:** Deterministic top 5 ranking with multi-key tie breaking (Percentage $\rightarrow$ Attendance $\rightarrow$ Student ID).
+#### View 1: Overview & Quick Start
+- **Privacy Notice:** Concise, always-visible notice confirming that computing occurs strictly in transient session memory, with an expandable section detailing server-side processing and hosting considerations.
+- **⚡ 1-Click Quick Demonstrations:**
+  - **🏫 School Model:** 1-click button loads 20 students, runs standard A+ to F grading, and automatically opens the Performance Dashboard.
+  - **🏛️ College Model:** 1-click button loads 25 students, applies collegiate grading (O, E, A, B, C, P, F) with mixed 100-mark theory and 50-mark lab scoring, and opens the Dashboard.
+  - **📤 Custom Dataset:** Jump directly to the ingestion and configuration workspace.
+- **Reference Templates:** Direct download buttons for `sample_school.csv` and `sample_college.csv`.
 
-### Tab 4: Subject Analytics & Difficulty Rankings
+#### View 2: Dataset Upload & Configuration (4-Step Workflow)
+Your primary configuration workspace is organized into 4 logical groups:
+
+1. **Step 1 — Dataset Upload & Column Mapping:**
+   - Upload your institution's CSV file (drag-and-drop or file picker) or load built-in sample datasets.
+   - Inspect active dataset metrics (row count, column count, SHA-256 fingerprint).
+   - Verify or adjust auto-detected column bindings for Student ID, Student Name, Attendance %, and Department/Section.
+2. **Step 2 — Subject Marks & Passing Rules:**
+   - Select course columns to evaluate.
+   - Specify maximum achievable marks for each subject (auto-detects 50 for labs/practicals and 100 for theory).
+   - Optionally enable subject-specific passing cutoff overrides.
+3. **Step 3 — Institution & Grading Policies:**
+   - Set Subject Passing Threshold (%) and Aggregate Passing Threshold (%) (default: 40%).
+   - Configure Attendance Warning Cutoff (%) and alert toggle (with pastoral advisory distinction).
+   - Apply standard institutional presets (`Default EduMetrics`, `Example School`, `Example College`) or customize letter grade boundaries.
+   - Dynamically add (`➕ Add Grade Level`) or remove (`➖ Remove Grade Level`) grading tiers (supports 2 to 12 tiers).
+   - (Optional) Enter Institution Details (Name, Level, Program, Term).
+4. **Step 4 — Policy Preview & Run Analysis:**
+   - Review live policy snapshot table and grade scale brackets.
+   - Click **"🚀 Run Academic Analysis"** to validate records and execute the evaluation engine.
+   - Click **"👉 View Performance Dashboard"** to immediately inspect computed results.
+
+#### View 3: Academic Performance Dashboard
+- **KPI Summary Cards:** Instant view of Total Enrolled, Overall Pass Rate, Class Average, Class Median, Mean Attendance, Attendance Shortages, and Class Topper.
+- **Letter Grade Distribution:** Monotonically ordered bar chart and percentage breakdown table.
+- **Statistical Overview:** Standard deviation, median, highest/lowest performers.
+- **Top Performers Leaderboard:** Deterministic ranking with multi-key tie breaking (Percentage $\rightarrow$ Attendance $\rightarrow$ Student ID).
+
+#### View 4: Subject Analytics & Difficulty Rankings
 - Ranked table showing every course's difficulty rank:
   - Rank #1 identifies the most challenging subject based on pass rate and class average.
   - Displays Max Marks, Average Score, Average Percentage, Pass Rate, Pass/Fail Counts, and Score Range.
 - Comparative subject pass rate visualization.
 
-### Tab 5: Student Explorer & Filter
+#### View 5: Student Explorer & Filter
 - Search individual student records by Student Name or Student ID.
 - Special punctuation characters (e.g. `[`, `(`, `-`) are handled safely without search crashes.
 - Filter by Department/Section or Pass/Fail status.
 
-### Tab 6: Academic Attention Indicators
+#### View 6: Academic Attention Indicators
 Surfaces students requiring early intervention using transparent, rule-based heuristics:
 - **Conceptual Support Needed:** High attendance ($\ge 85\%$) but low score ($< 50\%$).
 - **Critical Intervention:** Chronic absenteeism ($< 75\%$) compounded by academic failure ($< 50\%$).
 - **Subject-Specific Remediation:** Failed in exactly 1 course while maintaining an average $\ge 65\%$ across all other courses.
 - **Borderline / At-Risk:** Passing, but within 5 percentage points of failure.
 
-### Tab 7: Reports & Export
+#### View 7: Reports & Export
 - **Sanitized CSV Download:** Complete evaluated dataset including calculated totals, normalized percentages, letter grades, pass/fail statuses, and failure diagnostic messages. Every text field is protected against formula execution (CWE-1236).
 - **Summary Text Audit Report:** Formatted ASCII summary document containing institution metadata, applied policy snapshot, class statistics, and attention flags.
 
-### Tab 8: Help & Methodology
+#### View 8: Help & Methodology
 - Complete mathematical definitions of proportional normalization, the dual-layer passing rule, formula injection defusion, and privacy boundaries.
 
 ---

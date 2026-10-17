@@ -20,7 +20,7 @@ EduMetrics eliminates manual, error-prone spreadsheet calculations by providing 
 ## ✨ What's New in V1.0.0
 
 ### 1. Dual-Mode Analytics Architecture
-- **Interactive Web Dashboard (`app.py`):** An intuitive 8-tab Streamlit dashboard designed with accessibility-compliant typography, responsive layouts, and zero-login ephemeral session memory.
+- **Interactive Web Dashboard (`app.py`):** An intuitive Streamlit-native sidebar dashboard with 8 dedicated destinations, 1-click Quick Demos with full bidirectional configuration sync (UI-02.1), accessibility-compliant typography, responsive layouts, and zero-login ephemeral session memory.
 - **Standalone Headless CLI (`main.py`):** A full-featured command-line utility for automated batch processing, scripting, and grading report generation without requiring a browser or web server.
 
 ### 2. Heterogeneous Course Scoring & Normalization
@@ -56,8 +56,8 @@ EduMetrics eliminates manual, error-prone spreadsheet calculations by providing 
 
 ## 🛠️ Verification & Test Metrics
 
-- **Total Automated Tests:** **134 passed** (0 failed, 0 skipped) across 8 test suites.
-- **Test Execution Time:** 3.48 seconds.
+- **Total Automated Tests:** **145 passed** (0 failed, 0 skipped) across 8 test suites.
+- **Test Execution Time:** ~5.5 seconds.
 - **Supported Python Runtimes:** Python 3.9, 3.10, 3.11.
 - **Benchmark Datasets:**
   - `data/sample_school.csv`: 20 students, 5 subjects, uniform 100-mark scale.

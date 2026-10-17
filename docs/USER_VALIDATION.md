@@ -33,7 +33,7 @@ As part of my final project for the EWB Courses "Student Performance Analytics S
 I would deeply appreciate your practical perspective as an educator. I have prepared an interactive demonstration that takes approximately 10 to 15 minutes to evaluate using fictional student marks (no real student data is involved).
 
 App Link: [Insert Streamlit App URL or run locally via `streamlit run app.py`]
-Validation Guide & Sample CSV: https://github.com/rajkiranmishra/private/blob/fix/v1-hardening/docs/USER_VALIDATION.md
+Validation Guide & Sample CSV: https://github.com/rajkiranmishra/EduMetrics-/blob/main/docs/USER_VALIDATION.md
 
 The testing protocol involves 5 simple tasks:
 1. Loading an academic dataset.

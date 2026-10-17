@@ -78,6 +78,7 @@ def init_session_state(state: Optional[MutableMapping] = None) -> MutableMapping
             GradeBoundary("F", 0.0),
         ],
         "gb_version": 0,
+        "active_preset": "Default EduMetrics",
         "subject_configs": {},
         "analysis_config": None,
         "upload_error": None,
@@ -117,6 +118,7 @@ def replace_active_dataset(
     s["upload_error"] = None
     s["config_stale"] = False
     s["subject_configs"] = {}
+    s["active_preset"] = "Default EduMetrics"
     s["institution_metadata"] = InstitutionMetadata()
     s["custom_boundaries"] = [
         GradeBoundary("A+", 90.0),
@@ -146,6 +148,7 @@ def handle_failed_upload(
     s["dataset_fingerprint"] = None
     s["dataset_source"] = None
     s["subject_configs"] = {}
+    s["active_preset"] = "Default EduMetrics"
     s["institution_metadata"] = InstitutionMetadata()
     s["custom_boundaries"] = [
         GradeBoundary("A+", 90.0),

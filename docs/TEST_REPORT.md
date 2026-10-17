@@ -4,7 +4,7 @@
 **Document Version:** 2.0.0 (Final Pre-Release)  
 **Date of Execution:** 17 October 2026  
 **Test Framework:** `pytest 8.4.2` / `Python 3.9.6` / `macOS Darwin ARM64`  
-**Overall Status:** PASSED (134 of 134 tests passing, 100% success rate)  
+**Overall Status:** PASSED (145 of 145 tests passing, 100% success rate)  
 
 ---
 
@@ -12,15 +12,15 @@
 
 | Test Suite | File | Tests Run | Passed | Failed | Execution Time |
 | :--- | :--- | :---: | :---: | :---: | :---: |
-| **Loader & Ingestion** | `tests/test_loader.py` | 13 | 13 | 0 | 0.05s |
-| **Academic Validation** | `tests/test_validation.py` | 15 | 15 | 0 | 0.08s |
+| **Loader & Ingestion** | `tests/test_loader.py` | 12 | 12 | 0 | 0.05s |
+| **Academic Validation** | `tests/test_validation.py` | 16 | 16 | 0 | 0.08s |
 | **Grading, Precision & Policy** | `tests/test_grading.py` | 46 | 46 | 0 | 0.16s |
 | **Statistical Analytics** | `tests/test_analytics.py` | 7 | 7 | 0 | 0.03s |
 | **Reporting & Formatting** | `tests/test_reports.py` | 2 | 2 | 0 | 0.02s |
 | **Security, Sanitization & Limits** | `tests/test_security.py` | 13 | 13 | 0 | 0.06s |
-| **Session Isolation & State** | `tests/test_sessions.py` | 32 | 32 | 0 | 1.82s |
+| **Session Isolation & State** | `tests/test_sessions.py` | 43 | 43 | 0 | 4.80s |
 | **Standalone CLI Operations** | `tests/test_cli.py` | 6 | 6 | 0 | 0.06s |
-| **TOTAL** | | **134** | **134** | **0** | **3.48s** |
+| **TOTAL** | | **145** | **145** | **0** | **5.26s** |
 
 ---
 
@@ -87,6 +87,13 @@
 - Added regression test `test_grade_boundary_editor_preserves_user_edits_on_remove_tier`.
 - Added regression test `test_grade_boundary_editor_add_tier_at_low_percentage_avoids_duplicate`.
 - Added regression test `test_student_search_special_characters_regex_safety`.
+- Added UI-02.1 Workflow regression suite (Workflows A through F):
+  - `test_workflow_a_school_quick_demo_config_synchronization`: Verifies School demo populates exact settings and preserves clean analysis state on configuration review.
+  - `test_workflow_b_college_quick_demo_config_synchronization`: Verifies College demo synchronizes 50-mark lab weights (`Database_Lab`, `Web_Tech_Lab`, `Project_Phase_1`) and `Example College` grading preset (`O/E/A/B/C/P/F`).
+  - `test_workflow_c_open_config_without_change_preserves_analysis`: Confirms viewing configuration without edits does not flag analysis as stale.
+  - `test_workflow_d_change_subject_max_marks_invalidates_analysis`: Confirms mutating maximum marks immediately flags analysis as stale until re-evaluated.
+  - `test_workflow_e_switch_school_to_college_isolation`: Ensures switching between School and College demos completely replaces metadata, policy, and results with zero cross-contamination.
+  - `test_workflow_f_custom_upload_to_sample_and_back`: Confirms alternating between custom uploaded CSVs and sample datasets cleanly initializes mappings.
 
 ### 2.7 Standalone CLI Operations (`tests/test_cli.py`)
 - Verified `main.py` subject configuration inference (labs/projects default to 50 max marks, theory to 100).
@@ -126,6 +133,11 @@
    - *Problem:* An individual cell with $>500$ KB of characters caused memory spikes and UI rendering hangs.
    - *Fix:* Enforced `MAX_RAW_CELL_LENGTH = 512` in `core/loader.py`.
 
+7. **Quick-Demo Configuration Discrepancy & Invalidation (UI-02.1):**
+   - *Problem:* When educators executed a Quick Demo from Homepage and navigated to "Upload & Configure", widget controls defaulted to hardcoded School settings (100 marks for all subjects, Default preset) rather than reflecting the actual configuration used for the active analysis (e.g. College 50-mark labs and `Example College` preset), or inadvertently invalidated valid results upon page visit.
+   - *Fix:* Implemented unified `QuickDemoSpec` registry and dynamic widget defaulting in `PAGE_CONFIG` using `analysis_config`. Visiting the configuration without making changes keeps analysis valid; modifying any setting immediately marks analysis stale.
+   - *Regression Tests:* `test_workflow_a_school_quick_demo_config_synchronization` through `test_workflow_f_custom_upload_to_sample_and_back` (PASSED).
+
 ---
 
 ## 4. Performance & Resource Benchmarks
@@ -154,7 +166,7 @@ Real benchmarks conducted on **macOS Darwin ARM64** / **Python 3.9.6**:
 
 ## 5. Verification Sign-Off
 
-- **Automated Unit & Integration Tests:** 134/134 PASSED (100%)
+- **Automated Unit & Integration Tests:** 145/145 PASSED (100%)
 - **CLI Sample School Dataset:** Verified PASSED (0 errors, full report generated)
 - **CLI Sample College Dataset:** Verified PASSED (0 errors, full report generated)
 - **CLI Custom Policy & Overrides:** Verified PASSED (0 errors, metadata reflected)

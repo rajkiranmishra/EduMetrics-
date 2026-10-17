@@ -1018,3 +1018,154 @@ def test_reports_and_export_download_generation():
     assert any("Report Preview" in s for s in subheaders)
     assert len(at.text) > 0
     assert "EDUMETRICS ACADEMIC PERFORMANCE REPORT" in at.text[0].value
+
+
+def test_workflow_a_school_quick_demo_config_synchronization():
+    """Workflow A: School Quick Demo -> Dashboard -> Upload & Configure preserves settings and analysis validity."""
+    at = AppTest.from_file("app.py")
+    at.run()
+
+    # 1. Click School Demo
+    school_btn = get_button(at, "Load & Analyze School Model")
+    school_btn.click().run()
+    assert at.session_state["current_page"] == PAGE_DASHBOARD
+    assert at.session_state["evaluated_df"] is not None
+
+    # 2. Navigate to Upload & Configure
+    select_page(at, PAGE_CONFIG)
+    assert not at.exception
+    assert at.session_state["evaluated_df"] is not None, "Evaluated DF must remain valid when opening configuration"
+    assert at.session_state["config_stale"] is False, "Config must not be marked stale on clean navigation"
+
+    # Verify displayed configuration matches computed results
+    preset_sb = [sb for sb in at.selectbox if "Select Sample Preset" in sb.label][0]
+    assert preset_sb.value == "Default EduMetrics"
+
+    inst_name_ti = [ti for ti in at.text_input if "Institution Name" in ti.label][0]
+    assert inst_name_ti.value == "Greenwood High School"
+
+    prog_ti = [ti for ti in at.text_input if "Class / Course" in ti.label][0]
+    assert prog_ti.value == "Class 10-A"
+
+
+def test_workflow_b_college_quick_demo_config_synchronization():
+    """Workflow B: College Quick Demo -> Dashboard -> Upload & Configure preserves 50-mark labs and Example College preset."""
+    at = AppTest.from_file("app.py")
+    at.run()
+
+    # 1. Click College Demo
+    college_btn = get_button(at, "Load & Analyze College Model")
+    college_btn.click().run()
+    assert at.session_state["current_page"] == PAGE_DASHBOARD
+    assert at.session_state["evaluated_df"] is not None
+
+    # 2. Navigate to Upload & Configure
+    select_page(at, PAGE_CONFIG)
+    assert not at.exception
+    assert at.session_state["evaluated_df"] is not None, "College Evaluated DF must remain valid when opening configuration"
+    assert at.session_state["config_stale"] is False, "College Config must not be marked stale on clean navigation"
+
+    # Verify Example College preset and metadata
+    preset_sb = [sb for sb in at.selectbox if "Select Sample Preset" in sb.label][0]
+    assert preset_sb.value == "Example College"
+
+    inst_name_ti = [ti for ti in at.text_input if "Institution Name" in ti.label][0]
+    assert inst_name_ti.value == "Apex Institute of Technology"
+
+    prog_ti = [ti for ti in at.text_input if "Class / Course" in ti.label][0]
+    assert prog_ti.value == "B.Tech Computer Science"
+
+    # Verify heterogeneous 50-mark labs and 100-mark theory subjects
+    lab_ni = [ni for ni in at.number_input if "Database_Lab Max" in ni.label][0]
+    assert lab_ni.value == 50.0
+
+    web_ni = [ni for ni in at.number_input if "Web_Tech_Lab Max" in ni.label][0]
+    assert web_ni.value == 50.0
+
+    proj_ni = [ni for ni in at.number_input if "Project_Phase_1 Max" in ni.label][0]
+    assert proj_ni.value == 50.0
+
+    theory_ni = [ni for ni in at.number_input if "Data_Structures Max" in ni.label][0]
+    assert theory_ni.value == 100.0
+
+
+def test_workflow_c_open_config_without_change_preserves_analysis():
+    """Workflow C: Open configuration without changing anything preserves analysis validity."""
+    at = AppTest.from_file("app.py")
+    at.run()
+    get_button(at, "Load & Analyze School Model").click().run()
+    assert at.session_state["evaluated_df"] is not None
+
+    select_page(at, PAGE_CONFIG)
+    assert at.session_state["evaluated_df"] is not None
+    assert at.session_state["config_stale"] is False
+
+
+def test_workflow_d_change_subject_max_marks_invalidates_analysis():
+    """Workflow D: Change one subject maximum mark invalidates previous analysis until recomputed."""
+    at = AppTest.from_file("app.py")
+    at.run()
+    get_button(at, "Load & Analyze College Model").click().run()
+    assert at.session_state["evaluated_df"] is not None
+
+    select_page(at, PAGE_CONFIG)
+    theory_ni = [ni for ni in at.number_input if "Data_Structures Max" in ni.label][0]
+    theory_ni.set_value(120.0).run()
+
+    # Analysis must now be invalidated
+    assert at.session_state["evaluated_df"] is None
+    assert at.session_state["config_stale"] is True
+
+    # Re-running analysis must produce updated results
+    get_button(at, "Run Academic Analysis").click().run()
+    assert at.session_state["evaluated_df"] is not None
+    assert at.session_state["config_stale"] is False
+    assert at.session_state["subject_configs"]["Data_Structures"] == 120.0
+
+
+def test_workflow_e_switch_school_to_college_isolation():
+    """Workflow E: Switching from School Demo to College Demo isolates all dataset-specific configuration and results."""
+    at = AppTest.from_file("app.py")
+    at.run()
+
+    # School demo
+    get_button(at, "Load & Analyze School Model").click().run()
+    assert at.session_state["dataset_name"] == "sample_school.csv"
+    assert at.session_state["institution_metadata"].institution_name == "Greenwood High School"
+
+    # Switch to College demo
+    select_page(at, PAGE_OVERVIEW)
+    get_button(at, "Load & Analyze College Model").click().run()
+    assert at.session_state["dataset_name"] == "sample_college.csv"
+    assert at.session_state["institution_metadata"].institution_name == "Apex Institute of Technology"
+    assert "Mathematics" not in at.session_state["subject_configs"]
+    assert "Data_Structures" in at.session_state["subject_configs"]
+
+
+def test_workflow_f_custom_upload_to_sample_and_back():
+    """Workflow F: Switching from custom uploaded CSV to sample dataset and back to a new custom CSV leaves no leakage."""
+    at = AppTest.from_file("app.py")
+    at.run()
+    select_page(at, PAGE_CONFIG)
+
+    # 1. Custom upload A
+    csv1 = b"student_id,student_name,attendance,CustomCourse\nC01,Alice,90,85\n"
+    with patch("streamlit.file_uploader", return_value=_make_mock_file("custom1.csv", csv1)):
+        at.run()
+    assert at.session_state["dataset_name"] == "custom1.csv"
+    assert "CustomCourse" in at.session_state["raw_df"].columns
+
+    # 2. Switch to Sample School
+    with patch("streamlit.file_uploader", return_value=None):
+        get_button(at, "Sample School Dataset").click().run()
+    assert at.session_state["dataset_name"] == "sample_school.csv"
+    assert "CustomCourse" not in at.session_state["raw_df"].columns
+
+    # 3. New custom upload B
+    csv2 = b"reg_no,full_name,attendance,Physics\nP01,Bob,92,78\n"
+    with patch("streamlit.file_uploader", return_value=_make_mock_file("custom2.csv", csv2)):
+        at.run()
+    assert at.session_state["dataset_name"] == "custom2.csv"
+    assert "English" not in at.session_state["raw_df"].columns
+    assert "Physics" in at.session_state["raw_df"].columns
+

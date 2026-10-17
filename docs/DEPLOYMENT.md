@@ -65,7 +65,7 @@ Before triggering a public deployment, verify the following prerequisites:
 | :--- | :--- | :--- | :--- |
 | **Entry Point** | Root `app.py` exists and is executable | Verified | `test -f app.py && echo "OK"` |
 | **Dependencies** | `requirements.txt` has pinned versions | Verified | `pip install -r requirements.txt` |
-| **Test Suite** | All automated tests pass cleanly | Verified | `pytest -v` (134 passed) |
+| **Test Suite** | All automated tests pass cleanly | Verified | `pytest -v` (145 passed) |
 | **CLI Engine** | Standalone CLI executes on sample datasets | Verified | `python main.py --file data/sample_school.csv` |
 | **Sample Data** | `data/sample_school.csv` and `college` present | Verified | `ls -l data/*.csv` |
 | **Relative Paths** | Path resolution uses `os.path.abspath(__file__)` | Verified | Tested across arbitrary working dirs |
@@ -89,14 +89,14 @@ Follow these exact steps to deploy EduMetrics to Streamlit Community Cloud:
 ### Step 3: Configure Repository Settings
 In the **"Deploy an app"** dialog, configure the deployment parameters:
 
-- **Repository:** `rajkiranmishra/private` *(or `rajkiranmishra/edumetrics` once renamed)*
-- **Branch:** `fix/v1-hardening` *(or `main` following release merge)*
+- **Repository:** `rajkiranmishra/EduMetrics-`
+- **Branch:** `main` *(or `ui/v1-polish` for pre-release staging)*
 - **Main file path:** `app.py`
-- **App URL (optional):** Choose a custom subdomain if available (e.g., `edumetrics-demo.streamlit.app`).
+- **App URL (optional):** Choose a custom subdomain if available (e.g., `edumetrics-raj.streamlit.app`).
 
 ### Step 4: Advanced Configuration (Python Runtime)
 1. Click **"Advanced settings"** before deploying.
-2. **Python Version:** Select **Python 3.10** or **Python 3.11** (both fully tested and supported).
+2. **Python Version:** Select **Python 3.11** (recommended and verified; Python 3.10 and 3.9 are also compatible).
 3. **Secrets:** Leave blank. EduMetrics requires zero API keys, database credentials, or environment secrets.
 4. Click **"Save"**.
 
@@ -210,7 +210,7 @@ For institutional deployments requiring local network isolation or intranet host
 1. **Clone repository:**
    ```bash
    cd /opt
-   git clone https://github.com/rajkiranmishra/private.git edumetrics
+   git clone https://github.com/rajkiranmishra/EduMetrics-.git edumetrics
    cd edumetrics
    ```
 

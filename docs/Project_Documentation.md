@@ -197,8 +197,8 @@ The project follows a **Headless Modular Monolith** architecture with strict sep
 ---
 
 ### 10. GitHub Repository
-- **Current Repository:** [https://github.com/rajkiranmishra/private](https://github.com/rajkiranmishra/private)
-- **Target Repository Name:** `edumetrics` *(Renaming pending user approval)*
-- **Working Branch:** `fix/v1-hardening`
+- **Current Repository:** [https://github.com/rajkiranmishra/EduMetrics-](https://github.com/rajkiranmishra/EduMetrics-)
+- **Development Branch:** `ui/v1-polish`
+- **Target Production Branch:** `main`
 - **License:** MIT License
 - **Automated Testing:** GitHub Actions CI (`.github/workflows/ci.yml`)

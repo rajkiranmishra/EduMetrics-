@@ -3,9 +3,9 @@
 
 **Target Release:** EduMetrics V1.0.0  
 **Target Release Date:** 26 October 2026  
-**Source Branch:** `fix/v1-hardening`  
+**Source Branch:** `ui/v1-polish`  
 **Target Base Branch:** `main`  
-**Repository:** [https://github.com/rajkiranmishra/private](https://github.com/rajkiranmishra/private)  
+**Repository:** [https://github.com/rajkiranmishra/EduMetrics-](https://github.com/rajkiranmishra/EduMetrics-)  
 
 ---
 
@@ -13,8 +13,8 @@
 
 | Gate | Category | Description | Status | Sign-Off / Evidence |
 | :---: | :--- | :--- | :---: | :--- |
-| **G1** | **Code Integrity** | Fixes 01–04 implemented and verified | ✅ **PASSED** | Commits `46ed7ef` to `5f3dc4b` |
-| **G2** | **Automated Tests** | 100% pass rate on test suite | ✅ **PASSED** | 139 passed in 5.23s |
+| **G1** | **Code Integrity** | Fixes 01–04 and UI-02 / UI-02.1 implemented and verified | ✅ **PASSED** | Commits on `ui/v1-polish` |
+| **G2** | **Automated Tests** | 100% pass rate on test suite | ✅ **PASSED** | 145 passed in ~5.5s |
 | **G3** | **CLI Operations** | Headless CLI operates on all datasets | ✅ **PASSED** | `main.py` verified on School & College |
 | **G4** | **CI Workflow** | GitHub Actions matrix on Python 3.9, 3.10, 3.11 | ✅ **PASSED** | `.github/workflows/ci.yml` (main, fix/*, ui/*) |
 | **G5** | **Security & Privacy** | Zero secrets, CWE-1236 defusion, 2MB limit | ✅ **PASSED** | STRIDE review & upload checks |
@@ -32,14 +32,12 @@
 - [x] **Fix 02 — Data Validation & Non-Finite Numbers:** Rejects `NaN`, `Inf`, `-Inf`, unparseable values, duplicate IDs, and malformed CSVs with row-level diagnostics. *(Verified in `test_validation.py`)*
 - [x] **Fix 03 — Configurable Policies & Metadata:** Supports institution metadata, sample presets (`School`, `College`), per-subject pass thresholds, and dynamic grade boundaries. *(Verified in `test_grading.py`)*
 - [x] **Fix 04 — Security & Session Isolation:** Defensive formula defusion, input length bounds, filename sanitization, and multi-threaded session concurrency isolation. *(Verified in `test_security.py`)*
-- [x] **UI-02 — Educator Interface & Navigation Polish:**
-  - [x] Streamlit-native sidebar navigation replacing crowded horizontal `st.tabs`.
-  - [x] 1-Click quick start demonstrations for School and College models on Homepage.
-  - [x] Streamlined 4-group configuration layout with progressive disclosure.
-  - [x] Compact, non-intrusive privacy notice with expandable data protection details.
-  - [x] Polished dashboard KPI cards, monotonically ordered grade charts, and difficulty rankings.
-  - [x] Literal regex-safe student search matching (`regex=False, na=False`).
-  - [x] AppTest regression suite updated to semantic selectors (139 passing tests).
+- [x] **UI-02.1 — Quick-Demo Configuration Consistency:**
+  - [x] Full bidirectional sync between `run_quick_demo` and `PAGE_CONFIG` controls.
+  - [x] School and College demos populate identical widget states, column mappings, subject max marks (50-mark lab weights), active presets (`Example College`), and passing thresholds.
+  - [x] Visiting configuration without edits preserves active analysis; modifying any setting flags stale state.
+  - [x] Isolated transitions when switching between School, College, and custom uploaded CSVs.
+  - [x] 6 dedicated end-to-end regression tests verifying Workflows A through F.
 
 ---
 
@@ -47,24 +45,21 @@
 
 ```
 ============================== test session starts ==============================
-platform darwin -- Python 3.9.6, pytest-8.4.2, pluggy-1.6.0
-rootdir: /Users/rajkiranmishra/private
-configfile: pyproject.toml / setup.cfg
-collected 139 items
+collected 145 items
 
-tests/test_analytics.py .................................................... [ 37%]
-tests/test_cli.py ......                                                     [ 42%]
-tests/test_grading.py ....................................................   [ 79%]
-tests/test_loader.py .............                                           [ 88%]
-tests/test_reports.py ..                                                     [ 89%]
-tests/test_security.py .............                                         [ 96%]
-tests/test_sessions.py ..................................................... [ 99%]
+tests/test_analytics.py .................................................... [ 36%]
+tests/test_cli.py ......                                                     [ 40%]
+tests/test_grading.py ....................................................   [ 76%]
+tests/test_loader.py .............                                           [ 85%]
+tests/test_reports.py ..                                                     [ 86%]
+tests/test_security.py .............                                         [ 93%]
+tests/test_sessions.py ..................................................... [ 97%]
 tests/test_validation.py ...............                                     [100%]
 
-============================= 139 passed in 5.23s ==============================
+============================= 145 passed in 5.51s ==============================
 ```
 
-- [x] **Zero Failed Tests:** 139 passed, 0 failed, 0 skipped.
+- [x] **Zero Failed Tests:** 145 passed, 0 failed, 0 skipped.
 - [x] **Zero Flaky Tests:** Concurrency tests executed with 4 parallel threads.
 - [x] **Execution Speed:** Full test suite executes in ~5 seconds.
 

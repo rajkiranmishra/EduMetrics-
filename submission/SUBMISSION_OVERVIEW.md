@@ -5,8 +5,8 @@
 **Course / Track:** EWB Courses — Advanced Python & Data Analytics  
 **Project Title:** EduMetrics — Academic Performance Analytics Platform  
 **Target Deadline:** 26 October 2026  
-**Repository:** [https://github.com/rajkiranmishra/private](https://github.com/rajkiranmishra/private)  
-**Working Branch:** `fix/v1-hardening`  
+**Repository:** [https://github.com/rajkiranmishra/EduMetrics-](https://github.com/rajkiranmishra/EduMetrics-)  
+**Working Branch:** `ui/v1-polish`  
 **License:** MIT License  
 
 ---
@@ -125,7 +125,7 @@ The submission package includes two representative academic datasets:
 
 ### Step 1: Clone Repository
 ```bash
-git clone https://github.com/rajkiranmishra/private.git edumetrics
+git clone https://github.com/rajkiranmishra/EduMetrics-.git edumetrics
 cd edumetrics
 ```
 
@@ -141,7 +141,7 @@ pip install -r requirements.txt
 ```bash
 pytest -v
 ```
-*Expected Result: 134 passed in ~3.5 seconds with 100% pass rate.*
+*Expected Result: 145 passed in ~6.5 seconds with 100% pass rate.*
 
 ### Step 4: Execute Standalone CLI
 ```bash
@@ -168,14 +168,14 @@ streamlit run app.py
 
 ## 6. Testing Evidence Summary
 
-- **Total Automated Tests:** **134 passed** across 8 test suites:
+- **Total Automated Tests:** **145 passed** across 8 test suites:
   - `tests/test_analytics.py`: 7 tests
   - `tests/test_cli.py`: 6 tests
   - `tests/test_grading.py`: 46 tests
   - `tests/test_loader.py`: 13 tests
   - `tests/test_reports.py`: 2 tests
   - `tests/test_security.py`: 13 tests
-  - `tests/test_sessions.py`: 32 tests
+  - `tests/test_sessions.py`: 43 tests
   - `tests/test_validation.py`: 15 tests
 - **Continuous Integration:** Verified on GitHub Actions across Python 3.9, 3.10, and 3.11.
 

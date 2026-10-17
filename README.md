@@ -1,10 +1,10 @@
 # EduMetrics 🎓
 ### Academic Performance Analytics Platform
 
-[![EduMetrics CI](https://github.com/rajkiranmishra/private/actions/workflows/ci.yml/badge.svg)](https://github.com/rajkiranmishra/private/actions)
+[![EduMetrics CI](https://github.com/rajkiranmishra/EduMetrics-/actions/workflows/ci.yml/badge.svg)](https://github.com/rajkiranmishra/EduMetrics-/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://www.python.org/)
-[![Tests: 139 Passed](https://img.shields.io/badge/Tests-139%20Passed-success.svg)](docs/TEST_REPORT.md)
+[![Tests: 145 Passed](https://img.shields.io/badge/Tests-145%20Passed-success.svg)](docs/TEST_REPORT.md)
 
 **EduMetrics** is a production-minded academic analytics platform that empowers teachers, professors, and academic coordinators to validate student performance datasets, configure institutional grading policies, compute statistical cohort distributions, and export sanitized reports without requiring spreadsheet programming.
 
@@ -120,8 +120,8 @@ EduMetrics includes two fictional datasets in `data/`:
 
 ### 1. Clone the Repository
 ```bash
-# Clone active repository (or edumetrics.git once renamed)
-git clone https://github.com/rajkiranmishra/private.git edumetrics
+# Clone active repository
+git clone https://github.com/rajkiranmishra/EduMetrics-.git edumetrics
 cd edumetrics
 ```
 
@@ -260,18 +260,18 @@ pytest -v
 
 ```
 ============================== test session starts ==============================
-collected 134 items
+collected 145 items
 
-tests/test_analytics.py .......                                           [  5%]
-tests/test_cli.py ......                                                  [ 10%]
-tests/test_grading.py ..............................................      [ 44%]
-tests/test_loader.py .............                                        [ 54%]
-tests/test_reports.py ..                                                  [ 55%]
-tests/test_security.py .............                                      [ 65%]
-tests/test_sessions.py ................................                   [ 89%]
-tests/test_validation.py ...............                                  [100%]
+tests/test_analytics.py .......                                           [  4%]
+tests/test_cli.py ......                                                  [  8%]
+tests/test_grading.py ..............................................      [ 40%]
+tests/test_loader.py ............                                          [ 48%]
+tests/test_reports.py ..                                                  [ 50%]
+tests/test_security.py .............                                      [ 59%]
+tests/test_sessions.py ...........................................        [ 89%]
+tests/test_validation.py ................                                 [100%]
 
-============================== 134 passed in 3.48s ==============================
+============================= 145 passed in ~5.5s ==============================
 ```
 
 ---

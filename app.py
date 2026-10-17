@@ -5,6 +5,7 @@ Presentation layer for EduMetrics core engine.
 """
 
 import os
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 import streamlit as st
 import pandas as pd
@@ -122,94 +123,149 @@ def reset_session():
     st.rerun()
 
 
-def run_quick_demo(model_type: str):
-    """Execute quick start demonstration workflow using the trusted core pipeline."""
-    if model_type == "school":
-        path = SAMPLE_SCHOOL_PATH
-        filename = "sample_school.csv"
-        id_col = "student_id"
-        name_col = "student_name"
-        att_col = "attendance"
-        dept_col = "department"
-        preset_name = "Default EduMetrics"
-        inst_meta = InstitutionMetadata(
+@dataclass
+class QuickDemoSpec:
+    """Unified specification for sample demonstration workflows."""
+    model_type: str
+    sample_path: str
+    filename: str
+    id_col: str
+    name_col: str
+    att_col: str
+    dept_col: Optional[str]
+    preset_name: str
+    institution_metadata: InstitutionMetadata
+    custom_max_marks: Dict[str, float]
+    subject_pass_percentage: float = 40.0
+    aggregate_pass_percentage: float = 40.0
+    attendance_warning_threshold: float = 75.0
+    enable_attendance_warning: bool = True
+    subject_pass_overrides: Dict[str, float] = field(default_factory=dict)
+
+
+QUICK_DEMO_SPECS: Dict[str, QuickDemoSpec] = {
+    "school": QuickDemoSpec(
+        model_type="school",
+        sample_path=SAMPLE_SCHOOL_PATH,
+        filename="sample_school.csv",
+        id_col="student_id",
+        name_col="student_name",
+        att_col="attendance",
+        dept_col="department",
+        preset_name="Default EduMetrics",
+        institution_metadata=InstitutionMetadata(
             institution_name="Greenwood High School",
             academic_level="School",
             program_name="Class 10-A",
             academic_term="Term 1",
-        )
-        custom_max_marks = {}
-    elif model_type == "college":
-        path = SAMPLE_COLLEGE_PATH
-        filename = "sample_college.csv"
-        id_col = "student_id"
-        name_col = "student_name"
-        att_col = "attendance"
-        dept_col = "department"
-        preset_name = "Example College"
-        inst_meta = InstitutionMetadata(
+        ),
+        custom_max_marks={},
+    ),
+    "college": QuickDemoSpec(
+        model_type="college",
+        sample_path=SAMPLE_COLLEGE_PATH,
+        filename="sample_college.csv",
+        id_col="student_id",
+        name_col="student_name",
+        att_col="attendance",
+        dept_col="department",
+        preset_name="Example College",
+        institution_metadata=InstitutionMetadata(
             institution_name="Apex Institute of Technology",
             academic_level="College",
             program_name="B.Tech Computer Science",
             academic_term="Semester IV",
-        )
-        custom_max_marks = {
+        ),
+        custom_max_marks={
             "Database_Lab": 50.0,
-            "Project_Work": 50.0,
-        }
-    else:
+            "Web_Tech_Lab": 50.0,
+            "Project_Phase_1": 50.0,
+        },
+    ),
+}
+
+
+def infer_default_max_mark(subject_name: str) -> float:
+    """Infer standard maximum possible mark for a subject based on naming conventions."""
+    s_lower = subject_name.lower()
+    if any(k in s_lower for k in ["lab", "project", "practical"]):
+        return 50.0
+    return 100.0
+
+
+def get_active_preset_name(boundaries: List[GradeBoundary], current_preset: Optional[str] = None) -> str:
+    """Determine the name of the active grading preset matching boundaries."""
+    if current_preset and current_preset in GRADING_PRESETS:
+        expected = [(b.label, float(b.min_percentage)) for b in GRADING_PRESETS[current_preset]]
+        actual = [(b.label, float(b.min_percentage)) for b in boundaries]
+        if actual == expected:
+            return current_preset
+    actual = [(b.label, float(b.min_percentage)) for b in boundaries]
+    for name, p_bounds in GRADING_PRESETS.items():
+        if [(b.label, float(b.min_percentage)) for b in p_bounds] == actual:
+            return name
+    return "Default EduMetrics"
+
+
+def run_quick_demo(model_type: str):
+    """Execute quick start demonstration workflow using the trusted core pipeline."""
+    spec = QUICK_DEMO_SPECS.get(model_type)
+    if not spec:
         return
 
     try:
-        with open(path, "rb") as f:
+        with open(spec.sample_path, "rb") as f:
             file_bytes = f.read()
 
-        df, cols = load_csv_from_bytes(file_bytes, filename)
+        df, cols = load_csv_from_bytes(file_bytes, spec.filename)
         fingerprint = compute_dataset_fingerprint(file_bytes)
-        replace_active_dataset(df, filename, fingerprint, source="sample")
+        replace_active_dataset(df, spec.filename, fingerprint, source="sample")
         st.session_state.uploader_key += 1
 
-        excluded = [id_col, name_col, att_col, dept_col]
+        excluded = [spec.id_col, spec.name_col, spec.att_col]
+        if spec.dept_col:
+            excluded.append(spec.dept_col)
         selected_subjects = [c for c in cols if c not in excluded]
         subject_configs = {
-            s: custom_max_marks.get(s, 50.0 if any(k in s.lower() for k in ["lab", "project", "practical"]) else 100.0)
+            s: spec.custom_max_marks.get(s, infer_default_max_mark(s))
             for s in selected_subjects
         }
 
-        preset_bounds = [GradeBoundary(b.label, b.min_percentage) for b in GRADING_PRESETS[preset_name]]
+        preset_bounds = [GradeBoundary(b.label, b.min_percentage) for b in GRADING_PRESETS[spec.preset_name]]
         st.session_state.custom_boundaries = preset_bounds
+        st.session_state.active_preset = spec.preset_name
         st.session_state.gb_version += 1
 
         policy = GradingPolicy(
-            subject_pass_percentage=40.0,
-            aggregate_pass_percentage=40.0,
-            attendance_warning_threshold=75.0,
+            subject_pass_percentage=spec.subject_pass_percentage,
+            aggregate_pass_percentage=spec.aggregate_pass_percentage,
+            attendance_warning_threshold=spec.attendance_warning_threshold,
             grade_boundaries=preset_bounds,
-            subject_pass_overrides={},
-            enable_attendance_warning=True,
+            subject_pass_overrides=dict(spec.subject_pass_overrides),
+            enable_attendance_warning=spec.enable_attendance_warning,
         )
         policy.validate()
 
         val_res = validate_dataset(
             df=df,
-            student_id_col=id_col,
-            name_col=name_col,
-            attendance_col=att_col,
+            student_id_col=spec.id_col,
+            name_col=spec.name_col,
+            attendance_col=spec.att_col,
             subject_configs=subject_configs,
-            department_col=dept_col,
+            department_col=spec.dept_col,
         )
         if not val_res.is_valid:
-            handle_failed_upload(f"Validation failed for {filename}: {val_res.errors[0]}")
+            handle_failed_upload(f"Validation failed for {spec.filename}: {val_res.errors[0]}")
             return
 
         df_evaluated = evaluate_students(
             df=df,
-            student_id_col=id_col,
-            name_col=name_col,
-            attendance_col=att_col,
+            student_id_col=spec.id_col,
+            name_col=spec.name_col,
+            attendance_col=spec.att_col,
             subject_configs=subject_configs,
             policy=policy,
-            department_col=dept_col,
+            department_col=spec.dept_col,
         )
         summary = compute_class_summary(df_evaluated)
         subj_metrics = compute_subject_analytics(df_evaluated, subject_configs, policy.subject_pass_percentage)
@@ -226,29 +282,29 @@ def run_quick_demo(model_type: str):
         st.session_state.subject_metrics = subj_metrics
         st.session_state.attention_students = attention_cases
         st.session_state.policy = policy
-        st.session_state.institution_metadata = inst_meta
+        st.session_state.institution_metadata = spec.institution_metadata
         st.session_state.subject_configs = subject_configs
         st.session_state.analysis_config = create_analysis_config(
             dataset_fingerprint=fingerprint,
-            student_id_col=id_col,
-            name_col=name_col,
-            attendance_col=att_col,
-            department_col=dept_col,
+            student_id_col=spec.id_col,
+            name_col=spec.name_col,
+            attendance_col=spec.att_col,
+            department_col=spec.dept_col,
             selected_subjects=selected_subjects,
             subject_configs=subject_configs,
             subject_pass_percentage=policy.subject_pass_percentage,
             aggregate_pass_percentage=policy.aggregate_pass_percentage,
             attendance_warning_threshold=policy.attendance_warning_threshold,
             grade_boundaries=preset_bounds,
-            subject_pass_overrides={},
-            enable_attendance_warning=True,
-            institution_metadata=inst_meta,
+            subject_pass_overrides=policy.subject_pass_overrides,
+            enable_attendance_warning=policy.enable_attendance_warning,
+            institution_metadata=spec.institution_metadata,
         )
         st.session_state.config_stale = False
 
         navigate_to(PAGE_DASHBOARD)
     except Exception as err:
-        handle_failed_upload(f"Failed to execute quick demo for {filename}: {err}")
+        handle_failed_upload(f"Failed to execute quick demo for {spec.filename if spec else model_type}: {err}")
         st.rerun()
 
 
@@ -481,6 +537,7 @@ elif st.session_state.current_page == PAGE_CONFIG:
         raw_df = st.session_state.raw_df
         available_cols = list(raw_df.columns)
         fp = st.session_state.dataset_fingerprint or "default"
+        cfg = st.session_state.analysis_config
 
         st.markdown("---")
         st.write(f"**Active Dataset:** `{st.session_state.dataset_name}` ({len(raw_df)} records, {len(available_cols)} columns)")
@@ -495,7 +552,10 @@ elif st.session_state.current_page == PAGE_CONFIG:
 
         cm1, cm2, cm3, cm4 = st.columns(4)
         with cm1:
-            id_idx = find_default(["student_id", "id", "roll", "reg_no"], available_cols)
+            if cfg and cfg.get("student_id_col") in available_cols:
+                id_idx = available_cols.index(cfg["student_id_col"])
+            else:
+                id_idx = find_default(["student_id", "id", "roll", "reg_no"], available_cols)
             selected_id = st.selectbox(
                 "Student ID Column *",
                 available_cols,
@@ -504,7 +564,10 @@ elif st.session_state.current_page == PAGE_CONFIG:
                 help="Unique student identification number or registration roll.",
             )
         with cm2:
-            name_idx = find_default(["student_name", "name", "full_name"], available_cols)
+            if cfg and cfg.get("name_col") in available_cols:
+                name_idx = available_cols.index(cfg["name_col"])
+            else:
+                name_idx = find_default(["student_name", "name", "full_name"], available_cols)
             selected_name = st.selectbox(
                 "Student Name Column *",
                 available_cols,
@@ -513,7 +576,10 @@ elif st.session_state.current_page == PAGE_CONFIG:
                 help="Official student full name.",
             )
         with cm3:
-            att_idx = find_default(["attendance", "attendance_pct", "att"], available_cols)
+            if cfg and cfg.get("attendance_col") in available_cols:
+                att_idx = available_cols.index(cfg["attendance_col"])
+            else:
+                att_idx = find_default(["attendance", "attendance_pct", "att"], available_cols)
             selected_att = st.selectbox(
                 "Attendance (%) Column *",
                 available_cols,
@@ -523,7 +589,12 @@ elif st.session_state.current_page == PAGE_CONFIG:
             )
         with cm4:
             dept_opts = ["None"] + available_cols
-            dept_idx = find_default(["department", "dept", "section", "class"], dept_opts)
+            if cfg and cfg.get("department_col") in dept_opts:
+                dept_idx = dept_opts.index(cfg["department_col"])
+            elif cfg and cfg.get("department_col") is None:
+                dept_idx = 0
+            else:
+                dept_idx = find_default(["department", "dept", "section", "class"], dept_opts)
             selected_dept_opt = st.selectbox(
                 "Department / Section Column",
                 dept_opts,
@@ -545,10 +616,15 @@ elif st.session_state.current_page == PAGE_CONFIG:
             excluded_from_subjects.append(selected_dept)
 
         candidate_subjects = [c for c in available_cols if c not in excluded_from_subjects]
+        if cfg and cfg.get("selected_subjects"):
+            subjs_default = [s for s in cfg["selected_subjects"] if s in candidate_subjects]
+        else:
+            subjs_default = candidate_subjects
+
         selected_subjects = st.multiselect(
             "Select Subject Columns for Analysis *",
             options=candidate_subjects,
-            default=candidate_subjects,
+            default=subjs_default,
             key=f"sel_subjs_{fp}",
             help="Select all columns that represent academic course marks.",
         )
@@ -557,15 +633,26 @@ elif st.session_state.current_page == PAGE_CONFIG:
         subject_pass_overrides: Dict[str, float] = {}
         if selected_subjects:
             st.write("**Subject Maximum Possible Marks:**")
+            has_saved_overrides = bool(
+                (cfg and cfg.get("subject_pass_overrides")) or
+                (st.session_state.policy and st.session_state.policy.subject_pass_overrides)
+            )
             enable_overrides = st.checkbox(
                 "Configure subject-specific passing cutoffs (optional)",
+                value=has_saved_overrides,
                 key=f"enable_subj_overrides_{fp}",
                 help="Check this if specific courses have distinct passing percentage cutoffs (e.g. 50% for practical vs 40% for theory).",
             )
             sub_cols = st.columns(min(len(selected_subjects), 4))
             for i, subj in enumerate(selected_subjects):
                 col_target = sub_cols[i % len(sub_cols)]
-                default_max = 50.0 if any(k in subj.lower() for k in ["lab", "project", "practical"]) else 100.0
+                saved_max = None
+                if cfg and cfg.get("subject_configs") and subj in cfg["subject_configs"]:
+                    saved_max = float(cfg["subject_configs"][subj])
+                elif st.session_state.subject_configs and subj in st.session_state.subject_configs:
+                    saved_max = float(st.session_state.subject_configs[subj])
+                default_max = saved_max if saved_max is not None else infer_default_max_mark(subj)
+
                 max_val = col_target.number_input(
                     f"{subj} Max",
                     min_value=1.0,
@@ -577,11 +664,16 @@ elif st.session_state.current_page == PAGE_CONFIG:
                 )
                 subject_configs[subj] = float(max_val)
                 if enable_overrides:
+                    saved_pass = 40.0
+                    if cfg and cfg.get("subject_pass_overrides") and subj in cfg["subject_pass_overrides"]:
+                        saved_pass = float(cfg["subject_pass_overrides"][subj])
+                    elif st.session_state.policy and st.session_state.policy.subject_pass_overrides and subj in st.session_state.policy.subject_pass_overrides:
+                        saved_pass = float(st.session_state.policy.subject_pass_overrides[subj])
                     pass_val = col_target.number_input(
                         f"{subj} Pass Cut (%)",
                         min_value=0.0,
                         max_value=100.0,
-                        value=40.0,
+                        value=saved_pass,
                         step=1.0,
                         key=f"pass_m_{subj}_{fp}",
                         help=f"Minimum percentage required to pass {subj}.",
@@ -595,13 +687,30 @@ elif st.session_state.current_page == PAGE_CONFIG:
         st.subheader("3. Institution & Grading Policies")
         st.caption("Configure passing criteria, grading scale presets, and customizable grade brackets.")
 
+        default_subj_pass = float(
+            cfg["subject_pass_percentage"] if cfg and "subject_pass_percentage" in cfg
+            else (st.session_state.policy.subject_pass_percentage if st.session_state.policy else 40.0)
+        )
+        default_agg_pass = float(
+            cfg["aggregate_pass_percentage"] if cfg and "aggregate_pass_percentage" in cfg
+            else (st.session_state.policy.aggregate_pass_percentage if st.session_state.policy else 40.0)
+        )
+        default_att_warn = float(
+            cfg["attendance_warning_threshold"] if cfg and "attendance_warning_threshold" in cfg
+            else (st.session_state.policy.attendance_warning_threshold if st.session_state.policy else 75.0)
+        )
+        default_enable_att = bool(
+            cfg["enable_attendance_warning"] if cfg and "enable_attendance_warning" in cfg
+            else (st.session_state.policy.enable_attendance_warning if st.session_state.policy else True)
+        )
+
         pol1, pol2 = st.columns(2)
         with pol1:
             subj_pass_pct = st.number_input(
                 "Subject Passing Threshold (%)",
                 min_value=0.0,
                 max_value=100.0,
-                value=40.0,
+                value=default_subj_pass,
                 step=1.0,
                 key=f"pol_subj_{fp}",
                 help="Minimum percentage required in each individual subject unless overridden.",
@@ -611,7 +720,7 @@ elif st.session_state.current_page == PAGE_CONFIG:
                 "Aggregate Passing Threshold (%)",
                 min_value=0.0,
                 max_value=100.0,
-                value=40.0,
+                value=default_agg_pass,
                 step=1.0,
                 key=f"pol_agg_{fp}",
                 help="Minimum overall normalized aggregate percentage required to pass.",
@@ -624,7 +733,7 @@ elif st.session_state.current_page == PAGE_CONFIG:
                 "Attendance Warning Cutoff (%)",
                 min_value=0.0,
                 max_value=100.0,
-                value=75.0,
+                value=default_att_warn,
                 step=1.0,
                 key=f"pol_att_{fp}",
                 help="Attendance percentage below which students receive an advisory attendance alert.",
@@ -634,7 +743,7 @@ elif st.session_state.current_page == PAGE_CONFIG:
             st.write("")
             enable_att_warn = st.checkbox(
                 "Enable Attendance Shortage Warning Indicator",
-                value=True,
+                value=default_enable_att,
                 key=f"pol_att_enable_{fp}",
                 help="When enabled, flags students below the attendance cutoff. Attendance warnings do not cause academic course failure.",
             )
@@ -643,10 +752,17 @@ elif st.session_state.current_page == PAGE_CONFIG:
         # Presets & Grade Boundaries
         st.write("**Grading Scale Presets:**")
         pre_col1, pre_col2 = st.columns([3, 1])
+        preset_options = ["Default EduMetrics", "Example School", "Example College"]
+        active_preset = get_active_preset_name(
+            st.session_state.get("custom_boundaries", []),
+            st.session_state.get("active_preset")
+        )
+        preset_idx = preset_options.index(active_preset) if active_preset in preset_options else 0
         with pre_col1:
             preset_choice = st.selectbox(
                 "Select Sample Preset",
-                options=["Default EduMetrics", "Example School", "Example College"],
+                options=preset_options,
+                index=preset_idx,
                 key=f"preset_sel_{fp}",
                 label_visibility="collapsed",
             )
@@ -655,6 +771,7 @@ elif st.session_state.current_page == PAGE_CONFIG:
                 st.session_state.custom_boundaries = [
                     GradeBoundary(b.label, b.min_percentage) for b in GRADING_PRESETS[preset_choice]
                 ]
+                st.session_state.active_preset = preset_choice
                 st.session_state.gb_version = st.session_state.get("gb_version", 0) + 1
                 clear_analysis_results()
                 st.session_state.config_stale = True
@@ -710,6 +827,7 @@ elif st.session_state.current_page == PAGE_CONFIG:
                         if new_pct <= 0.0 or new_pct == prev_pct:
                             new_pct = round(prev_pct * 0.75, 1)
                     st.session_state.custom_boundaries = list(edited_boundaries[:-1]) + [GradeBoundary(f"G{len(edited_boundaries)}", new_pct), last]
+                    st.session_state.active_preset = "Custom"
                     st.session_state.gb_version = gb_ver + 1
                     clear_analysis_results()
                     st.session_state.config_stale = True
@@ -720,6 +838,7 @@ elif st.session_state.current_page == PAGE_CONFIG:
             if st.button("➖ Remove Grade Level", key=f"btn_rem_tier_{fp}"):
                 if len(edited_boundaries) > 2:
                     st.session_state.custom_boundaries = list(edited_boundaries[:-2]) + [edited_boundaries[-1]]
+                    st.session_state.active_preset = "Custom"
                     st.session_state.gb_version = gb_ver + 1
                     clear_analysis_results()
                     st.session_state.config_stale = True
@@ -770,7 +889,7 @@ elif st.session_state.current_page == PAGE_CONFIG:
                 )
                 inst_term = st.text_input(
                     "Academic Term / Semester",
-                    value=st.session_state.institution_metadata.academic_term,
+                    value=st.session_state.institution_metadata.academic_term or st.session_state.institution_metadata.term or "",
                     key=f"inst_term_{fp}",
                     help="e.g. Term 1, Semester IV, Fall 2026.",
                 )

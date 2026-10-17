@@ -13,7 +13,7 @@ import pandas as pd
 
 from security.upload_checks import defuse_formula_injection
 from .analytics import ClassSummary, SubjectMetric, AcademicAttentionStudent
-from .grading import GradingPolicy
+from .grading import GradingPolicy, InstitutionMetadata
 
 
 def generate_sanitized_csv(df_evaluated: pd.DataFrame) -> bytes:
@@ -37,6 +37,7 @@ def generate_text_summary(
     attention_students: list[AcademicAttentionStudent],
     policy: GradingPolicy,
     dataset_name: str = "Uploaded Dataset",
+    institution_metadata: Optional[InstitutionMetadata] = None,
 ) -> str:
     """Produce a structured, readable plain-text report for CLI and summary views."""
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -50,11 +51,30 @@ def generate_text_summary(
     lines.append(f"Dataset: {dataset_name} | Total Records: {class_summary.total_students}")
     lines.append("")
 
+    # Section 0: Institution Details (if provided)
+    if institution_metadata and not institution_metadata.is_empty():
+        lines.append("[0] INSTITUTION DETAILS")
+        if institution_metadata.institution_name:
+            lines.append(f"  * Institution Name : {institution_metadata.institution_name}")
+        if institution_metadata.academic_level:
+            lines.append(f"  * Academic Level   : {institution_metadata.academic_level}")
+        if institution_metadata.program_name:
+            lines.append(f"  * Program / Class  : {institution_metadata.program_name}")
+        if institution_metadata.term:
+            lines.append(f"  * Term / Semester  : {institution_metadata.term}")
+        lines.append("-" * 78)
+
     # Section 1: Academic Policy Snapshot
     lines.append("[1] APPLIED ACADEMIC POLICY")
     lines.append(f"  * Subject Pass Threshold   : {policy.subject_pass_percentage:.1f}%")
+    if policy.subject_pass_overrides:
+        overrides_str = ", ".join([f"{k}: {v:.1f}%" for k, v in sorted(policy.subject_pass_overrides.items())])
+        lines.append(f"  * Subject Pass Overrides   : {overrides_str}")
     lines.append(f"  * Aggregate Pass Threshold : {policy.aggregate_pass_percentage:.1f}%")
-    lines.append(f"  * Attendance Warning Level : < {policy.attendance_warning_threshold:.1f}%")
+    if policy.enable_attendance_warning:
+        lines.append(f"  * Attendance Warning Level : < {policy.attendance_warning_threshold:.1f}% (Enabled)")
+    else:
+        lines.append("  * Attendance Warning Level : Disabled")
     scale_str = ", ".join([f"{b.label} (>={b.min_percentage:.0f}%)" for b in policy.grade_boundaries])
     lines.append(f"  * Grade Boundaries         : {scale_str}")
     lines.append("-" * 78)
@@ -86,14 +106,15 @@ def generate_text_summary(
 
     # Section 4: Subject Analytics
     lines.append("[4] SUBJECT-WISE PERFORMANCE & DIFFICULTY RANKING")
-    header = f"  {'Subject':<20} {'Max':<5} {'Avg Score':<11} {'Pass %':<8} {'Min':<6} {'Max':<6} {'Rank':<5}"
+    header = f"  {'Subject':<18} {'Max':<5} {'Pass Cut':<9} {'Avg Score':<10} {'Pass %':<8} {'Min':<6} {'Max':<6} {'Rank':<5}"
     lines.append(header)
     lines.append("  " + "-" * 74)
     for sm in subject_metrics:
         row_str = (
-            f"  {sm.subject_name:<20} "
+            f"  {sm.subject_name:<18} "
             f"{sm.max_marks:<5.0f} "
-            f"{sm.average_score:<11.1f} "
+            f"{sm.pass_threshold:<9.1f} "
+            f"{sm.average_score:<10.1f} "
             f"{sm.pass_percentage:<8.1f} "
             f"{sm.lowest_score:<6.1f} "
             f"{sm.highest_score:<6.1f} "

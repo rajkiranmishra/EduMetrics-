@@ -110,3 +110,54 @@ def test_department_summary(evaluated_df):
     assert len(df_dept) == 2  # Dept A and Dept B
     assert "average_percentage" in df_dept.columns
     assert "pass_percentage" in df_dept.columns
+
+
+def test_empty_dataframe_analytics():
+    """Verify that all analytics functions handle an empty DataFrame gracefully without errors."""
+    empty_df = pd.DataFrame()
+    summary = compute_class_summary(empty_df)
+    assert summary.total_students == 0
+    assert summary.overall_pass_percentage == 0.0
+    assert summary.top_student_name == "N/A"
+
+    subj_metrics = compute_subject_analytics(empty_df, {"Math": 100.0})
+    assert subj_metrics == []
+
+    dept_summary = compute_department_summary(empty_df)
+    assert dept_summary.empty
+
+    top_p = get_top_performers(empty_df, n=5)
+    assert top_p.empty
+
+    attention = identify_academic_attention_cases(empty_df, {"Math": 100.0})
+    assert attention == []
+
+
+def test_single_student_analytics(default_policy):
+    """Verify statistical analytics for a single-student cohort (n = 1)."""
+    df = pd.DataFrame({
+        "student_id": ["S01"],
+        "student_name": ["Alice"],
+        "attendance": ["95.0"],
+        "Math": ["90.0"],
+    })
+    df_eval = evaluate_students(
+        df=df,
+        student_id_col="student_id",
+        name_col="student_name",
+        attendance_col="attendance",
+        subject_configs={"Math": 100.0},
+        policy=default_policy,
+    )
+    summary = compute_class_summary(df_eval)
+    assert summary.total_students == 1
+    assert summary.passed_students == 1
+    assert summary.failed_students == 0
+    assert summary.std_percentage == 0.0
+    assert summary.top_student_id == "S01"
+    assert summary.lowest_student_id == "S01"
+
+    metrics = compute_subject_analytics(df_eval, {"Math": 100.0})
+    assert len(metrics) == 1
+    assert metrics[0].std_score == 0.0
+

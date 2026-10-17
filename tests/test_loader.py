@@ -59,3 +59,46 @@ def test_missing_file_raises_ingestion_error():
     """Verify clean exception when file does not exist."""
     with pytest.raises(IngestionError, match="Could not open file"):
         load_csv_from_path("data/non_existent_file.csv")
+
+
+def test_empty_column_header_rejected():
+    """Verify that CSV with an empty column header raises IngestionError."""
+    csv_bytes = b"student_id,name,,Math\nS01,Alice,90,80\n"
+    with pytest.raises(IngestionError, match="empty or whitespace-only column header"):
+        load_csv_from_bytes(csv_bytes, filename="empty_header.csv")
+
+
+def test_duplicate_headers_after_whitespace_normalization_rejected():
+    """Verify that column headers identical after trimming whitespace are rejected."""
+    csv_bytes = b"student_id,name,Math, Math \nS01,Alice,90,80\n"
+    with pytest.raises(IngestionError, match="duplicate column headers"):
+        load_csv_from_bytes(csv_bytes, filename="dup_whitespace.csv")
+
+
+def test_whitespace_only_file_rejected():
+    """Verify that file containing only whitespace or blank lines is rejected."""
+    csv_bytes = b"   \n\t\n   \r\n"
+    with pytest.raises(IngestionError, match="contains no readable content"):
+        load_csv_from_bytes(csv_bytes, filename="blank.csv")
+
+
+def test_malformed_quoted_csv_rejected():
+    """Verify that unclosed or malformed quotes in CSV raise an IngestionError."""
+    csv_bytes = b'student_id,name,attendance\n"S01,Alice,90\n'
+    with pytest.raises(IngestionError, match="Failed to parse CSV|Malformed CSV|Inconsistent row length"):
+        load_csv_from_bytes(csv_bytes, filename="bad_quote.csv")
+
+
+def test_inconsistent_row_length_rejected():
+    """Verify that rows with mismatched number of columns raise IngestionError."""
+    csv_bytes = b"student_id,name,attendance\nS01,Alice,90,ExtraColumnValue\n"
+    with pytest.raises(IngestionError, match="Inconsistent row length|Failed to parse CSV"):
+        load_csv_from_bytes(csv_bytes, filename="inconsistent_cols.csv")
+
+
+def test_csv_with_no_data_rows_rejected():
+    """Verify that CSV with only a header row and 0 data rows is rejected."""
+    csv_bytes = b"student_id,student_name,attendance,Math\n"
+    with pytest.raises(IngestionError, match="0 data rows"):
+        load_csv_from_bytes(csv_bytes, filename="header_only.csv")
+

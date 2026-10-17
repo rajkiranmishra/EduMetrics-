@@ -13,7 +13,15 @@ import pandas as pd
 
 from core.loader import load_csv_from_path, IngestionError
 from core.validation import validate_dataset
-from core.grading import GradingPolicy, GradeBoundary, evaluate_students
+from core.grading import (
+    GradingPolicy,
+    GradeBoundary,
+    InstitutionMetadata,
+    GRADING_PRESETS,
+    parse_grade_boundaries_string,
+    evaluate_students,
+    PolicyConfigurationError,
+)
 from core.analytics import (
     compute_class_summary,
     compute_subject_analytics,
@@ -62,8 +70,13 @@ def run_cli(args: argparse.Namespace) -> int:
 
     file_path = args.file
     if not os.path.exists(file_path):
-        print(f"\n[ERROR] Specified file not found: '{file_path}'")
-        return 1
+        # Also check relative to script directory as fallback
+        base_fallback = os.path.join(os.path.dirname(os.path.abspath(__file__)), file_path)
+        if os.path.exists(base_fallback):
+            file_path = base_fallback
+        else:
+            print(f"\n[ERROR] Specified file not found: '{file_path}'")
+            return 1
 
     print(f"[*] Ingesting academic dataset: {file_path}")
 
@@ -110,29 +123,83 @@ def run_cli(args: argparse.Namespace) -> int:
     print(f"[+] Validation Passed cleanly with 0 errors and {val_result.warning_count} warning(s).")
 
     # 4. Grading policy configuration
-    policy = GradingPolicy(
-        subject_pass_percentage=args.subject_pass,
-        aggregate_pass_percentage=args.aggregate_pass,
-        attendance_warning_threshold=args.attendance_warning,
+    boundaries = None
+    if args.grade_boundaries:
+        try:
+            boundaries = parse_grade_boundaries_string(args.grade_boundaries)
+        except Exception as e:
+            print(f"\n[POLICY CONFIGURATION ERROR] Invalid grade boundaries: {e}")
+            return 1
+    elif args.preset:
+        preset_key = args.preset.lower()
+        if "school" in preset_key:
+            boundaries = GRADING_PRESETS["Example School"]
+        elif "college" in preset_key:
+            boundaries = GRADING_PRESETS["Example College"]
+        else:
+            boundaries = GRADING_PRESETS["Default EduMetrics"]
+
+    overrides = {}
+    if args.subject_pass_overrides:
+        try:
+            for pair in args.subject_pass_overrides.split(","):
+                if not pair.strip():
+                    continue
+                subj, val = pair.split(":")
+                overrides[subj.strip()] = float(val.strip())
+        except Exception as e:
+            print(f"\n[POLICY CONFIGURATION ERROR] Invalid subject pass overrides: {e}")
+            return 1
+
+    try:
+        policy = GradingPolicy(
+            subject_pass_percentage=args.subject_pass,
+            aggregate_pass_percentage=args.aggregate_pass,
+            attendance_warning_threshold=args.attendance_warning,
+            grade_boundaries=boundaries if boundaries else GradingPolicy().grade_boundaries,
+            subject_pass_overrides=overrides,
+            enable_attendance_warning=not args.disable_attendance_warning,
+        )
+        policy.validate()
+    except (PolicyConfigurationError, ValueError) as err:
+        print(f"\n[POLICY CONFIGURATION ERROR] {err}")
+        return 1
+
+    inst_meta = InstitutionMetadata(
+        institution_name=args.institution or "",
+        academic_level=args.level or "",
+        program_name=args.program or "",
+        term=args.term or "",
     )
 
     # 5. Evaluate student performance
     print("[*] Computing normalized scores, grades, and pass/fail statuses...")
-    df_evaluated = evaluate_students(
-        df=df_raw,
-        student_id_col=args.id_col,
-        name_col=args.name_col,
-        attendance_col=args.attendance_col,
-        subject_configs=subject_configs,
-        policy=policy,
-        department_col=args.dept_col if args.dept_col in df_raw.columns else None,
-    )
+    try:
+        df_evaluated = evaluate_students(
+            df=df_raw,
+            student_id_col=args.id_col,
+            name_col=args.name_col,
+            attendance_col=args.attendance_col,
+            subject_configs=subject_configs,
+            policy=policy,
+            department_col=args.dept_col if args.dept_col in df_raw.columns else None,
+        )
+    except (PolicyConfigurationError, ValueError) as err:
+        print(f"\n[EVALUATION ERROR] {err}")
+        return 1
 
     # 6. Analytics
+    pass_thresh_arg = policy.subject_pass_overrides if policy.subject_pass_overrides else policy.subject_pass_percentage
     class_summary = compute_class_summary(df_evaluated)
-    subject_metrics = compute_subject_analytics(df_evaluated, subject_configs, policy.subject_pass_percentage)
+    subject_metrics = compute_subject_analytics(df_evaluated, subject_configs, pass_thresh_arg)
     dept_summary = compute_department_summary(df_evaluated)
-    attention_students = identify_academic_attention_cases(df_evaluated, subject_configs, policy.subject_pass_percentage)
+    attention_students = identify_academic_attention_cases(
+        df_evaluated,
+        subject_configs,
+        pass_thresh_arg,
+        aggregate_pass_threshold=policy.aggregate_pass_percentage,
+        attendance_warning_threshold=policy.attendance_warning_threshold,
+    )
     top_performers = get_top_performers(df_evaluated, n=args.top)
 
     # 7. Print Report
@@ -142,6 +209,7 @@ def run_cli(args: argparse.Namespace) -> int:
         attention_students=attention_students,
         policy=policy,
         dataset_name=os.path.basename(file_path),
+        institution_metadata=inst_meta,
     )
     print("\n" + report_text)
 
@@ -223,6 +291,48 @@ def main():
         type=float,
         default=75.0,
         help="Attendance percentage threshold below which warnings are triggered",
+    )
+    parser.add_argument(
+        "--disable-attendance-warning",
+        action="store_true",
+        help="Disable attendance warning indicator completely",
+    )
+    parser.add_argument(
+        "--preset",
+        choices=["Default", "School", "College", "Default EduMetrics", "Example School", "Example College"],
+        default=None,
+        help="Predefined sample grading preset to apply",
+    )
+    parser.add_argument(
+        "--grade-boundaries",
+        default=None,
+        help="Custom grade boundaries, e.g. 'A+:90,A:80,B:70,C:60,D:40,F:0'",
+    )
+    parser.add_argument(
+        "--subject-pass-overrides",
+        default=None,
+        help="Per-subject pass percentages, e.g. 'Physics:45,Chemistry:50'",
+    )
+    parser.add_argument(
+        "--institution",
+        default="",
+        help="Institution name (optional)",
+    )
+    parser.add_argument(
+        "--level",
+        default="",
+        choices=["", "School", "College", "University", "Other"],
+        help="Academic level (optional)",
+    )
+    parser.add_argument(
+        "--program",
+        default="",
+        help="Class, course, or program name (optional)",
+    )
+    parser.add_argument(
+        "--term",
+        default="",
+        help="Academic term or semester (optional)",
     )
     parser.add_argument(
         "--top",

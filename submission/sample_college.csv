@@ -1,0 +1,26 @@
+student_id,student_name,department,attendance,Data_Structures,Algorithms,Operating_Systems,Database_Lab,Web_Tech_Lab,Project_Phase_1
+001,Aman Bhatia,CSE,95.0,88.0,91.0,85.0,46.0,48.0,47.0
+002,Bhavna Singhal,CSE,92.5,76.0,82.0,80.0,42.0,44.0,43.0
+003,Chirag Pandya,CSE,88.0,65.0,70.0,68.0,38.0,39.0,40.0
+004,Deepika Natarajan,CSE,97.0,94.0,96.0,92.0,49.0,50.0,48.0
+005,Ehsan Qureshi,CSE,65.0,42.0,38.0,40.0,22.0,20.0,24.0
+006,Falguni Shah,CSE,91.0,82.0,84.0,86.0,44.0,45.0,42.0
+007,Gautam Menon,CSE,89.5,85.0,78.0,81.0,43.0,41.0,45.0
+008,Hansa Trivedi,CSE,93.0,45.0,48.0,44.0,24.0,23.0,25.0
+009,Inderpreet Singh,IT,90.0,80.0,78.0,82.0,42.0,43.0,44.0
+010,Juhi Saxena,IT,96.0,90.0,93.0,89.0,47.0,48.0,46.0
+011,Karthik Subramanian,IT,84.0,71.0,69.0,74.0,37.0,38.0,39.0
+012,Lavanya Sundaram,IT,89.0,77.0,81.0,79.0,41.0,42.0,40.0
+013,Manish Tiwari,IT,68.0,35.0,32.0,38.0,18.0,19.0,20.0
+014,Nandini Bose,IT,94.0,87.0,89.0,85.0,45.0,46.0,47.0
+015,Omkar Bhave,IT,87.0,83.0,35.0,80.0,43.0,42.0,44.0
+016,Pranali Jadhav,IT,91.5,42.0,44.0,43.0,22.0,21.0,23.0
+017,Qasim Ali,ECE,86.0,74.0,76.0,78.0,39.0,40.0,41.0
+018,Roshni Mukherjee,ECE,95.5,91.0,90.0,93.0,48.0,47.0,49.0
+019,Sameer Kulkarni,ECE,83.0,69.0,72.0,70.0,36.0,37.0,38.0
+020,Tanya Narang,ECE,92.0,84.0,86.0,82.0,44.0,45.0,43.0
+021,Umesh Dube,ECE,62.0,40.0,36.0,39.0,20.0,19.0,21.0
+022,Vaishnavi Rane,ECE,93.0,86.0,88.0,84.0,45.0,44.0,46.0
+023,Wasim Akram,ECE,88.0,79.0,81.0,34.0,42.0,41.0,43.0
+024,Yash Vardhan,ECE,90.0,43.0,41.0,44.0,21.0,22.0,20.0
+025,Zeenat Parveen,ECE,98.0,95.0,97.0,94.0,50.0,49.0,50.0

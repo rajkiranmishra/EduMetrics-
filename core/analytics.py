@@ -10,9 +10,11 @@ Implements:
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Union
 import pandas as pd
 import numpy as np
+
+from .grading import is_greater_or_close
 
 
 @dataclass
@@ -52,6 +54,7 @@ class SubjectMetric:
     pass_percentage: float
     average_percentage: float
     difficulty_rank: int = 1
+    pass_threshold: float = 40.0
 
 
 @dataclass
@@ -68,7 +71,7 @@ class AcademicAttentionStudent:
 
 
 def compute_class_summary(df_evaluated: pd.DataFrame) -> ClassSummary:
-    """Compute aggregate class statistics using NumPy and Pandas."""
+    """Compute aggregate class statistics using NumPy and Pandas with full numerical precision."""
     n = len(df_evaluated)
     if n == 0:
         return ClassSummary(
@@ -91,7 +94,8 @@ def compute_class_summary(df_evaluated: pd.DataFrame) -> ClassSummary:
             grade_distribution={},
         )
 
-    percentages = df_evaluated["percentage"].to_numpy(dtype=float)
+    pct_col = "raw_percentage" if "raw_percentage" in df_evaluated.columns else "percentage"
+    percentages = df_evaluated[pct_col].to_numpy(dtype=float)
     attendances = df_evaluated["attendance"].to_numpy(dtype=float)
 
     passed_count = int((df_evaluated["status"] == "PASS").sum())
@@ -105,9 +109,9 @@ def compute_class_summary(df_evaluated: pd.DataFrame) -> ClassSummary:
     high_pct = round(float(np.max(percentages)), 2)
     low_pct = round(float(np.min(percentages)), 2)
 
-    # Identifiers for highest and lowest
-    top_row = df_evaluated.loc[df_evaluated["percentage"].idxmax()]
-    low_row = df_evaluated.loc[df_evaluated["percentage"].idxmin()]
+    # Identifiers for highest and lowest based on full unrounded precision
+    top_row = df_evaluated.loc[df_evaluated[pct_col].idxmax()]
+    low_row = df_evaluated.loc[df_evaluated[pct_col].idxmin()]
 
     avg_att = round(float(np.mean(attendances)), 2)
     med_att = round(float(np.median(attendances)), 2)
@@ -140,7 +144,7 @@ def compute_class_summary(df_evaluated: pd.DataFrame) -> ClassSummary:
 def compute_subject_analytics(
     df_evaluated: pd.DataFrame,
     subject_configs: Dict[str, float],
-    pass_percentage_threshold: float = 40.0,
+    pass_percentage_threshold: Union[float, Dict[str, float]] = 40.0,
 ) -> List[SubjectMetric]:
     """Compute performance distributions and difficulty rankings for all subjects."""
     metrics: List[SubjectMetric] = []
@@ -158,8 +162,12 @@ def compute_subject_analytics(
         high_s = round(float(np.max(scores)), 2)
         low_s = round(float(np.min(scores)), 2)
 
-        pass_mark = (pass_percentage_threshold / 100.0) * max_m
-        pass_cnt = int(np.sum(scores >= pass_mark))
+        if isinstance(pass_percentage_threshold, dict):
+            s_thresh = float(pass_percentage_threshold.get(subj, 40.0))
+        else:
+            s_thresh = float(pass_percentage_threshold)
+        pass_mark = (s_thresh / 100.0) * max_m
+        pass_cnt = int(sum(is_greater_or_close(float(s), pass_mark) for s in scores))
         fail_cnt = n - pass_cnt
         pass_pct = round((pass_cnt / n) * 100.0, 2)
         avg_pct = round((avg_s / max_m) * 100.0, 2) if max_m > 0 else 0.0
@@ -176,6 +184,7 @@ def compute_subject_analytics(
             fail_count=fail_cnt,
             pass_percentage=pass_pct,
             average_percentage=avg_pct,
+            pass_threshold=s_thresh,
         ))
 
     # Rank difficulty: lower pass percentage = higher difficulty (Rank 1 = hardest)
@@ -192,12 +201,13 @@ def compute_department_summary(df_evaluated: pd.DataFrame) -> pd.DataFrame:
     if "department" not in df_evaluated.columns:
         return pd.DataFrame()
 
+    pct_col = "raw_percentage" if "raw_percentage" in df_evaluated.columns else "percentage"
     dept_rows = []
     for dept_name, group in df_evaluated.groupby("department"):
         n = len(group)
         passed = int((group["status"] == "PASS").sum())
         pass_pct = round((passed / n) * 100.0, 2)
-        avg_pct = round(float(group["percentage"].mean()), 2)
+        avg_pct = round(float(group[pct_col].mean()), 2)
         avg_att = round(float(group["attendance"].mean()), 2)
 
         dept_rows.append({
@@ -216,18 +226,23 @@ def compute_department_summary(df_evaluated: pd.DataFrame) -> pd.DataFrame:
 
 
 def get_top_performers(df_evaluated: pd.DataFrame, n: int = 5) -> pd.DataFrame:
-    """Extract top N students with deterministic tie-breaking.
+    """Extract top N students with deterministic tie-breaking using full unrounded precision.
 
     Tie-breaking order:
-    1. Percentage (descending)
+    1. Percentage (unrounded raw_percentage, descending)
     2. Attendance (descending)
     3. Student ID (ascending, alphabetical)
     """
     if df_evaluated.empty:
         return pd.DataFrame()
 
+    sort_cols = (
+        ["raw_percentage", "attendance", "student_id"]
+        if "raw_percentage" in df_evaluated.columns
+        else ["percentage", "attendance", "student_id"]
+    )
     sorted_df = df_evaluated.sort_values(
-        by=["percentage", "attendance", "student_id"],
+        by=sort_cols,
         ascending=[False, False, True],
     ).head(n).copy()
 
@@ -239,15 +254,17 @@ def get_top_performers(df_evaluated: pd.DataFrame, n: int = 5) -> pd.DataFrame:
 def identify_academic_attention_cases(
     df_evaluated: pd.DataFrame,
     subject_configs: Dict[str, float],
-    pass_percentage_threshold: float = 40.0,
+    pass_percentage_threshold: Union[float, Dict[str, float]] = 40.0,
+    aggregate_pass_threshold: float = 40.0,
+    attendance_warning_threshold: float = 75.0,
 ) -> List[AcademicAttentionStudent]:
     """Identify students requiring targeted academic support via transparent rules.
 
     Indicators:
     1. CONCEPTUAL_SUPPORT_NEEDED: Attendance >= 85% and Percentage < 50%.
-    2. CHRONIC_ABSENTEEISM_CRITICAL: Attendance < 75% and Percentage < 50%.
+    2. CHRONIC_ABSENTEEISM_CRITICAL: Attendance < attendance_warning_threshold (default: 75%) and Percentage < 50%.
     3. SUBJECT_SPECIFIC_OUTLIER: Failed in exactly 1 subject, while other subjects average >= 65%.
-    4. BORDERLINE_AT_RISK: Status is PASS, but 40.0% <= Percentage < 45.0%.
+    4. BORDERLINE_AT_RISK: Status is PASS, but aggregate_pass_threshold <= Percentage < (aggregate_pass_threshold + 5.0).
     """
     flagged: List[AcademicAttentionStudent] = []
 
@@ -255,7 +272,8 @@ def identify_academic_attention_cases(
         sid = str(row["student_id"])
         sname = str(row["student_name"])
         dept = str(row.get("department", "General"))
-        pct = float(row["percentage"])
+        pct = float(row["raw_percentage"]) if "raw_percentage" in row else float(row["percentage"])
+        display_pct = float(row["percentage"]) if "percentage" in row else round(pct, 2)
         att = float(row["attendance"])
         status = str(row["status"])
 
@@ -265,7 +283,7 @@ def identify_academic_attention_cases(
                 student_id=sid,
                 student_name=sname,
                 department=dept,
-                percentage=pct,
+                percentage=display_pct,
                 attendance=att,
                 category="Conceptual Support Needed",
                 rationale="High class attendance (>=85%) but low score (<50%). Student is engaged but struggling with concept mastery.",
@@ -274,15 +292,15 @@ def identify_academic_attention_cases(
             continue
 
         # Rule 2: Low Attendance and Low Score
-        if att < 75.0 and pct < 50.0:
+        if att < attendance_warning_threshold and pct < 50.0:
             flagged.append(AcademicAttentionStudent(
                 student_id=sid,
                 student_name=sname,
                 department=dept,
-                percentage=pct,
+                percentage=display_pct,
                 attendance=att,
                 category="Critical Intervention (Attendance & Academic)",
-                rationale="Chronic absenteeism (<75%) compounded by failing academic performance (<50%).",
+                rationale=f"Chronic absenteeism (<{attendance_warning_threshold:.1f}%) compounded by failing academic performance (<50%).",
                 action_item="Initiate student counseling and parent/guardian attendance review.",
             ))
             continue
@@ -290,13 +308,18 @@ def identify_academic_attention_cases(
         # Rule 3: Single-Subject Stumbling Block Outlier
         failed_count = int(row.get("failed_subject_count", 0))
         if failed_count == 1:
-            # Find the failed subject and other subjects' scores
             failed_subj_name = None
             other_percentages = []
             for subj, max_m in subject_configs.items():
+                if subj not in row:
+                    continue
                 s_score = float(row[subj])
-                s_pct = (s_score / max_m) * 100.0 if max_m > 0 else 0.0
-                if s_pct < pass_percentage_threshold:
+                s_pct = (s_score / max_m) * 100.0 if (max_m and max_m > 0) else 0.0
+                if isinstance(pass_percentage_threshold, dict):
+                    s_thresh = float(pass_percentage_threshold.get(subj, 40.0))
+                else:
+                    s_thresh = float(pass_percentage_threshold)
+                if not is_greater_or_close(s_pct, s_thresh):
                     failed_subj_name = subj
                 else:
                     other_percentages.append(s_pct)
@@ -307,7 +330,7 @@ def identify_academic_attention_cases(
                     student_id=sid,
                     student_name=sname,
                     department=dept,
-                    percentage=pct,
+                    percentage=display_pct,
                     attendance=att,
                     category="Subject-Specific Remediation",
                     rationale=f"Academically strong overall ({other_avg:.1f}% avg in other subjects) but failed exclusively in '{failed_subj_name}'.",
@@ -316,15 +339,16 @@ def identify_academic_attention_cases(
                 continue
 
         # Rule 4: Borderline Passing (At-Risk)
-        if status == "PASS" and 40.0 <= pct < 45.0:
+        borderline_upper = aggregate_pass_threshold + 5.0
+        if status == "PASS" and is_greater_or_close(pct, aggregate_pass_threshold) and pct < borderline_upper:
             flagged.append(AcademicAttentionStudent(
                 student_id=sid,
                 student_name=sname,
                 department=dept,
-                percentage=pct,
+                percentage=display_pct,
                 attendance=att,
                 category="Borderline / At-Risk",
-                rationale="Passed, but within 5 percentage points of failing threshold (40.0%).",
+                rationale=f"Passed, but within 5 percentage points of failing threshold ({aggregate_pass_threshold:.1f}%).",
                 action_item="Monitor weekly progress to prevent regression into failure.",
             ))
 

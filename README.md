@@ -1,10 +1,10 @@
 # EduMetrics 🎓
 ### Academic Performance Analytics Platform
 
-[![EduMetrics CI](https://github.com/rajkiranmishra/edumetrics/actions/workflows/ci.yml/badge.svg)](https://github.com/rajkiranmishra/edumetrics/actions)
+[![EduMetrics CI](https://github.com/rajkiranmishra/EduMetrics-/actions/workflows/ci.yml/badge.svg)](https://github.com/rajkiranmishra/EduMetrics-/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://www.python.org/)
-[![Tests: 31 Passed](https://img.shields.io/badge/Tests-31%20Passed-success.svg)](docs/TEST_REPORT.md)
+[![Tests: 145 Passed](https://img.shields.io/badge/Tests-145%20Passed-success.svg)](docs/TEST_REPORT.md)
 
 **EduMetrics** is a production-minded academic analytics platform that empowers teachers, professors, and academic coordinators to validate student performance datasets, configure institutional grading policies, compute statistical cohort distributions, and export sanitized reports without requiring spreadsheet programming.
 
@@ -45,11 +45,15 @@ EduMetrics resolves these challenges through a **zero-login, session-ephemeral w
 ## ✨ Key Features
 
 - **Dual Operating Modes:** Run headlessly via terminal CLI (`main.py`) or interactively in a web browser (`app.py`).
+- **Institutional Metadata Support:** Configure institution name, academic level (School / College / University / Other), class/program name, and term/semester for audit-ready reports.
+- **Configurable Grade Boundaries & Presets:** Define custom letter grades and percentage cutoffs with validation (finite, strictly monotonic, lowest at 0.0%). Select from built-in presets (`Default EduMetrics`, `Example School`, `Example College`) and customize them as needed.
 - **Flexible Column Mapping:** Resiliently maps custom column names for Student ID, Name, Department, Attendance, and dynamic subject lists.
 - **Heterogeneous Score Normalization:** Proportional normalization across subjects with different maximum possible marks.
-- **Dual-Layer Institutional Pass/Fail Rules:** Independent subject-level and aggregate-level thresholds with detailed failure diagnostics.
+- **Per-Subject & Aggregate Passing Rules:** Independent subject-level cutoffs (with optional per-subject overrides) and aggregate thresholds with detailed failure diagnostics.
+- **Configurable Attendance Warnings:** Decoupled attendance warning policy (configurable threshold, toggleable indicator) that never causes academic failure.
 - **Deterministic Ranking:** Multi-key tie-breaking (Percentage $\rightarrow$ Attendance $\rightarrow$ Student ID).
 - **Rule-Based Academic Attention Flags:** Transparent heuristics identifying students needing tutoring, chronic absenteeism intervention, or single-course remediation.
+- **Session State Integrity:** Automatic cache invalidation ensures changing policies or datasets instantly resets stale calculations.
 - **CSV Formula Injection Defusion (CWE-1236):** Neutralizes formula triggers (`=`, `+`, `-`, `@`, `\t`, `\r`) on export.
 - **Privacy by Design:** Zero permanent database storage in V1; records exist only in transient session memory.
 
@@ -66,9 +70,10 @@ edumetrics/
 ├── core/
 │   ├── loader.py                  # Encoding detection, safe CSV ingestion
 │   ├── validation.py              # Schema, score bounds, duplicate checks
-│   ├── grading.py                 # Normalization, grade brackets, pass/fail
+│   ├── grading.py                 # Normalization, grade brackets, pass/fail, presets
 │   ├── analytics.py               # NumPy/Pandas statistics, ranking, attention
-│   └── reports.py                 # Sanitized CSV and text summary generation
+│   ├── reports.py                 # Sanitized CSV and text summary generation
+│   └── session_state.py           # Session isolation, widget keys, staleness tracking
 ├── security/
 │   └── upload_checks.py           # 2MB file limits, row/col caps, formula defusion
 ├── data/
@@ -80,7 +85,7 @@ edumetrics/
 │   ├── SECURITY.md                # Threat model (STRIDE) & disclosure policy
 │   ├── TEST_REPORT.md             # Test results, benchmarks, and bug fixes
 │   └── Project_Documentation.md   # EWB Courses assignment compliance document
-├── tests/                         # 31 automated pytest unit & security tests
+├── tests/                         # 116 automated pytest unit, security & session tests
 ├── app.py                         # Streamlit Web Application (UI layer only)
 ├── main.py                        # Standalone CLI Entrypoint
 ├── requirements.txt               # Pinned dependencies
@@ -96,7 +101,7 @@ edumetrics/
 - **NumPy** — Fast numerical calculations (mean, median, standard deviation, extremes).
 - **Pandas** — DataFrames, schema validation, grouping, and CSV export.
 - **Streamlit** — Interactive presentation layer with session-ephemeral state.
-- **pytest** — Automated test suite with 100% pass rate across 31 tests.
+- **pytest** — Automated test suite with 100% pass rate across 116 tests.
 
 ---
 
@@ -115,7 +120,8 @@ EduMetrics includes two fictional datasets in `data/`:
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/rajkiranmishra/edumetrics.git
+# Clone active repository
+git clone https://github.com/rajkiranmishra/EduMetrics-.git edumetrics
 cd edumetrics
 ```
 
@@ -140,8 +146,11 @@ Run the analytics engine directly from your terminal:
 # Run on the School dataset (default)
 python main.py --file data/sample_school.csv
 
-# Run on the College dataset with custom top performers and CSV export
-python main.py --file data/sample_college.csv --top 5 --export analyzed_report.csv
+# Run with institutional metadata and an example preset
+python main.py --file data/sample_college.csv --institution "National Tech Institute" --level "College" --preset "Example College" --top 5 --export analyzed_report.csv
+
+# Run with custom grade boundaries and per-subject passing cutoffs
+python main.py --file data/sample_school.csv --grade-boundaries "A+:90,A:80,B:70,C:60,D:40,F:0" --subject-pass-overrides "Mathematics:45,Science:40"
 ```
 
 ### CLI Command Options
@@ -150,9 +159,17 @@ python main.py --file data/sample_college.csv --top 5 --export analyzed_report.c
 - `--name-col`: Column header for Student Name (default: `student_name`).
 - `--attendance-col`: Column header for Attendance % (default: `attendance`).
 - `--dept-col`: Column header for Department (default: `department`).
-- `--subject-pass`: Minimum % required to pass individual subjects (default: `40.0`).
+- `--institution`: Name of the educational institution (optional).
+- `--level`: Academic level (`School`, `College`, `University`, `Other`).
+- `--program`: Class, course, or program name (optional).
+- `--term`: Academic term or semester (optional).
+- `--preset`: Grading scale preset (`Default EduMetrics`, `Example School`, `Example College`).
+- `--grade-boundaries`: Custom grade boundaries formatted as `GRADE:MIN_PERCENT,...`.
+- `--subject-pass`: Default minimum % required to pass individual subjects (default: `40.0`).
+- `--subject-pass-overrides`: Per-subject pass thresholds formatted as `SUBJECT:CUTOFF,...`.
 - `--aggregate-pass`: Minimum overall aggregate % required to pass (default: `40.0`).
 - `--attendance-warning`: Attendance % threshold for warning (default: `75.0`).
+- `--disable-attendance-warning`: Flag to disable attendance warning indicators.
 - `--top`: Number of top performers to display (default: `5`).
 - `--export`, `-e`: Optional path to save evaluated and formula-defused CSV.
 
@@ -168,15 +185,21 @@ streamlit run app.py
 
 Open your browser at `http://localhost:8501`.
 
-### Web Workflow:
-1. **Overview & Samples:** Read the privacy notice and download sample CSV templates.
-2. **Upload & Configure:** Upload your CSV (or load a sample with 1 click), map columns, configure maximum marks, and set grading policies.
-3. **Performance Dashboard:** View class averages, pass rates, grade distribution charts, and leaderboards.
-4. **Subject Analysis:** Inspect pass rates and difficulty rankings per subject.
-5. **Student Explorer:** Search, filter, and sort student-level performance records.
+### Web Workflow & Navigation:
+EduMetrics features a responsive sidebar navigation system with 8 destinations:
+1. **Overview & Quick Start:** Concise privacy notice and 1-click quick start demonstrations for School and College models.
+2. **Upload & Configure:** Upload CSVs or select built-in datasets with a structured 4-group workflow:
+   - **Group 1 — Dataset Upload & Column Mapping:** Ingest CSV and configure column mapping for Student ID, Name, Department, and Attendance.
+   - **Group 2 — Subject Marks & Passing Rules:** Dynamic subject detection, maximum achievable marks (100 for theory, 50 for lab), and optional per-subject passing cutoffs.
+   - **Group 3 — Institution & Grading Policies:** Set passing thresholds, configure attendance warnings, select presets (`Default EduMetrics`, `Example School`, `Example College`), edit grade tiers (2 to 12 levels), and enter optional institutional metadata.
+   - **Group 4 — Policy Preview & Run Analysis:** Real-time policy snapshot, stale configuration warning, and 1-click analysis execution.
+3. **Performance Dashboard:** View KPI metric cards, pass rates, sorted letter grade distribution charts, and deterministic leaderboards.
+4. **Subject Analysis:** Inspect pass rates, averages, and curriculum difficulty rankings per course.
+5. **Student Explorer:** Search (literal, regex-safe), filter by department or pass/fail, and sort student-level performance records.
 6. **Academic Attention:** Review students flagged for conceptual tutoring, chronic absenteeism, or subject remediation.
-7. **Reports & Export:** Download sanitized CSV reports (with formula defusion) and text summaries.
-8. **Reset Session:** Click "Start New Analysis / Reset" to clear all session memory.
+7. **Reports & Export:** Download sanitized CSV reports (with formula defusion) and comprehensive text summaries.
+8. **Help & Methodology:** Review mathematical formulas, normalization rules, and privacy architecture.
+9. **Reset Session:** Click "Start New Analysis / Reset" in the sidebar to cleanly clear all transient session memory.
 
 ---
 
@@ -184,22 +207,29 @@ Open your browser at `http://localhost:8501`.
 
 ### 1. Proportional Score Normalization
 $$\text{Normalized Percentage} = \left( \frac{\sum_{i=1}^M \text{Marks Obtained}_i}{\sum_{i=1}^M \text{Maximum Possible Marks}_i} \right) \times 100$$
+All subject marks are normalized proportionally against their respective maximum marks, correctly weighting heterogeneous subjects.
 
-### 2. Default Institutional Grade Scale
-- **A+:** $\ge 90.0\%$
-- **A:** $80.0\% - 89.99\%$
-- **B+:** $70.0\% - 79.99\%$
-- **B:** $60.0\% - 69.99\%$
-- **C:** $50.0\% - 59.99\%$
-- **D:** $40.0\% - 49.99\%$
-- **F:** $< 40.0\%$
+### 2. Configurable Grade Boundaries & Presets
+EduMetrics assigns letter grades based on unrounded percentages (`raw_percentage`) using strictly monotonic boundaries starting at 0.0%:
+- **Default EduMetrics:** A+ ($\ge 90$), A ($\ge 80$), B+ ($\ge 70$), B ($\ge 60$), C ($\ge 50$), D ($\ge 40$), F ($0$)
+- **Example School:** A+ ($\ge 90$), A ($\ge 80$), B ($\ge 70$), C ($\ge 60$), D ($\ge 40$), F ($0$)
+- **Example College:** O ($\ge 90$), E ($\ge 80$), A ($\ge 70$), B ($\ge 60$), C ($\ge 50$), P ($\ge 40$), F ($0$)
 
-### 3. Dual-Layer Pass/Fail Rule
-A student passes if and only if:
-1. Every subject score meets or exceeds the subject pass threshold (default: 40%).
-2. Overall normalized percentage meets or exceeds the aggregate pass threshold (default: 40%).
+*(Note: Presets are illustrative samples, not official regulations, and can be fully customized by the user).*
 
-### 4. Transparent Academic Attention Indicators
+### 3. Dual-Layer Pass/Fail Rule vs. Grade Assignment
+Letter grade assignment and pass/fail evaluation serve distinct institutional functions:
+- A student receives a letter grade reflecting overall percentage.
+- A student passes if and only if:
+  1. Every subject score meets or exceeds its configured passing threshold (default or per-subject override).
+  2. Overall normalized aggregate percentage meets or exceeds the aggregate pass threshold.
+If a student fails any single subject, their overall status is `FAIL` with diagnostic details (e.g., `"Failed in: Mathematics"`), even if their aggregate score would otherwise place them in an upper grade tier.
+
+### 4. Attendance Policy & Decoupled Warnings
+- Attendance warning status is an administrative/pastoral indicator (default: $< 75\%$).
+- Attendance warnings are strictly separated from academic performance: low attendance **never** causes academic failure unless explicitly mandated by academic pass thresholds.
+
+### 5. Transparent Academic Attention Indicators
 - **Conceptual Support Needed:** Attendance $\ge 85\%$ and Score $< 50\%$.
 - **Critical Intervention:** Attendance $< 75\%$ and Score $< 50\%$.
 - **Subject-Specific Remediation:** Failed exactly 1 subject, while remaining subjects average $\ge 65\%$.
@@ -209,16 +239,20 @@ A student passes if and only if:
 
 ## 🔒 Security & Privacy Controls
 
-- **CWE-1236 Formula Injection Defense:** All exported text cells starting with `=`, `+`, `-`, `@`, `\t`, or `\r` are neutralized by prepending a single quote (`'`), protecting educators opening files in Microsoft Excel or Apple Numbers.
-- **Resource Limits:** Hard caps of 2 MB file size, 5,000 rows, and 30 columns prevent memory exhaustion DoS attacks.
-- **Binary Rejection:** Null bytes and binary executable magic headers are rejected before parsing.
-- **Zero Disk Retention:** Uploaded student data lives strictly within volatile session memory.
+- **CWE-1236 Formula Injection Defense:** All exported text cells starting with `=`, `+`, `-`, `@`, `\t`, `\r`, or `%` (including leading whitespace bypasses like `"   =1+1"`) are neutralized by prepending a single quote (`'`), protecting educators opening files in Microsoft Excel, Apple Numbers, LibreOffice Calc, or Google Sheets.
+- **Multi-Layer Ingestion Bounds:** Enforces a 2 MB file size limit, 5,000 maximum rows, 30 maximum columns, 512-character maximum individual cell length, and 64-character maximum header length.
+- **Identifier Length Limits:** Enforces strict field bounds: Student ID ($\le 64$), Student Name ($\le 128$), and Department ($\le 64$).
+- **Adversarial Filename Sanitization:** Path traversal sequences (`../`, `..\`), null bytes, control characters, and HTML tags are stripped from filenames.
+- **Unicode & Control Character Defenses:** Prohibits dangerous bidirectional override characters (`\u202e` etc.) and unprintable control characters to prevent visual spoofing.
+- **Validation Error Capping:** Capped at 500 errors to prevent memory exhaustion and browser UI rendering denial of service.
+- **Transient In-Memory Processing:** Analysis executes strictly in transient server-side memory; EduMetrics V1 does not intentionally persist datasets to disk or databases.
+- **Fictional Data Requirement:** Users are explicitly instructed to upload fictional or anonymized academic records only.
 
 ---
 
 ## 🧪 Automated Testing
 
-EduMetrics includes a comprehensive test suite of **31 automated tests** covering all modules:
+EduMetrics includes a comprehensive test suite of **134 automated tests** covering all modules:
 
 ```bash
 pytest -v
@@ -226,26 +260,32 @@ pytest -v
 
 ```
 ============================== test session starts ==============================
-collected 31 items
+collected 145 items
 
-tests/test_analytics.py ...................................... [ 16%]
-tests/test_grading.py ........................................ [ 35%]
-tests/test_loader.py ......................................... [ 54%]
-tests/test_reports.py ........................................ [ 61%]
-tests/test_security.py ....................................... [ 77%]
-tests/test_sessions.py ....................................... [ 80%]
-tests/test_validation.py ..................................... [100%]
+tests/test_analytics.py .......                                           [  4%]
+tests/test_cli.py ......                                                  [  8%]
+tests/test_grading.py ..............................................      [ 40%]
+tests/test_loader.py ............                                          [ 48%]
+tests/test_reports.py ..                                                  [ 50%]
+tests/test_security.py .............                                      [ 59%]
+tests/test_sessions.py ...........................................        [ 89%]
+tests/test_validation.py ................                                 [100%]
 
-============================== 31 passed in 0.06s ==============================
+============================= 145 passed in ~5.5s ==============================
 ```
 
 ---
 
 ## 📚 Project Documentation Index
 
+- [USER_GUIDE.md](docs/USER_GUIDE.md) — Comprehensive user manual for educators and coordinators.
+- [DEPLOYMENT.md](docs/DEPLOYMENT.md) — Streamlit Community Cloud and Linux VM deployment procedures.
+- [USER_VALIDATION.md](docs/USER_VALIDATION.md) — Educator field testing protocol, questionnaire, and sample dataset.
+- [RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) — Quality gates, pre-flight checks, and release sign-off.
+- [RELEASE_NOTES.md](docs/RELEASE_NOTES.md) — Official EduMetrics V1.0.0 release notes.
 - [SRS.md](docs/SRS.md) — Comprehensive Software Requirements Specification.
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) — Component diagrams, data flow, and future relational DB schema.
-- [SECURITY.md](docs/SECURITY.md) — Threat model (STRIDE), trust boundaries, and vulnerability reporting.
+- [SECURITY.md](docs/SECURITY.md) — Threat model (STRIDE), trust boundaries, and vulnerability disclosure.
 - [TEST_REPORT.md](docs/TEST_REPORT.md) — Test execution evidence, bug fixes, and performance benchmarks.
 - [Project_Documentation.md](docs/Project_Documentation.md) — EWB Courses assignment compliance document (10 headings).
 
@@ -256,6 +296,7 @@ tests/test_validation.py ..................................... [100%]
 ### Tested Scope (V1)
 - Tested with cohort sizes of 20 to 5,000 records.
 - Zero login / anonymous session-ephemeral mode.
+- Institutional metadata and custom grading configuration are stored ephemerally in session memory and cleared on reset or session end.
 - High-fidelity formula-defused CSV exports.
 
 ### Planned for V2 (Post-Submission)

@@ -1,10 +1,10 @@
 # Automated Test Execution & Quality Assurance Report
 ## EduMetrics — Academic Performance Analytics Platform
 
-**Document Version:** 1.0.0  
-**Date of Execution:** 14 October 2026  
+**Document Version:** 2.0.0 (Final Pre-Release)  
+**Date of Execution:** 17 October 2026  
 **Test Framework:** `pytest 8.4.2` / `Python 3.9.6` / `macOS Darwin ARM64`  
-**Overall Status:** PASSED (31 of 31 tests passing, 100% success rate)  
+**Overall Status:** PASSED (145 of 145 tests passing, 100% success rate)  
 
 ---
 
@@ -12,80 +12,163 @@
 
 | Test Suite | File | Tests Run | Passed | Failed | Execution Time |
 | :--- | :--- | :---: | :---: | :---: | :---: |
-| **Loader & Ingestion** | `tests/test_loader.py` | 6 | 6 | 0 | 0.01s |
-| **Academic Validation** | `tests/test_validation.py` | 6 | 6 | 0 | 0.01s |
-| **Grading & Policy** | `tests/test_grading.py` | 6 | 6 | 0 | 0.01s |
-| **Statistical Analytics** | `tests/test_analytics.py` | 5 | 5 | 0 | 0.01s |
-| **Reporting & Formatting** | `tests/test_reports.py` | 2 | 2 | 0 | 0.01s |
-| **Security & Sanitization**| `tests/test_security.py` | 5 | 5 | 0 | 0.01s |
-| **Session Isolation** | `tests/test_sessions.py` | 1 | 1 | 0 | 0.01s |
-| **TOTAL** | | **31** | **31** | **0** | **0.06s** |
+| **Loader & Ingestion** | `tests/test_loader.py` | 12 | 12 | 0 | 0.05s |
+| **Academic Validation** | `tests/test_validation.py` | 16 | 16 | 0 | 0.08s |
+| **Grading, Precision & Policy** | `tests/test_grading.py` | 46 | 46 | 0 | 0.16s |
+| **Statistical Analytics** | `tests/test_analytics.py` | 7 | 7 | 0 | 0.03s |
+| **Reporting & Formatting** | `tests/test_reports.py` | 2 | 2 | 0 | 0.02s |
+| **Security, Sanitization & Limits** | `tests/test_security.py` | 13 | 13 | 0 | 0.06s |
+| **Session Isolation & State** | `tests/test_sessions.py` | 43 | 43 | 0 | 4.80s |
+| **Standalone CLI Operations** | `tests/test_cli.py` | 6 | 6 | 0 | 0.06s |
+| **TOTAL** | | **145** | **145** | **0** | **5.26s** |
 
 ---
 
 ## 2. Test Execution Details by Suite
 
 ### 2.1 Ingestion & Loader (`tests/test_loader.py`)
-- `test_sample_datasets_load_successfully`: Verified `data/sample_school.csv` (20 rows) and `data/sample_college.csv` (25 rows) load with correct column structures.
-- `test_leading_zero_preservation`: Verified student ID `"001"` remains string length 3 and is not converted to integer `1`.
-- `test_duplicate_column_headers_rejected`: Verified raw CSV duplicate headers raise `IngestionError`.
-- `test_empty_file_rejected`: Verified 0-byte upload raises `IngestionError`.
-- `test_encoding_detection`: Verified UTF-8, UTF-8-BOM, and Latin-1 accented characters ("Renée") decode cleanly.
-- `test_missing_file_raises_ingestion_error`: Verified clean error handling when a non-existent path is provided.
+- Verified standard sample datasets load cleanly (`sample_school.csv`, `sample_college.csv`).
+- Leading zero preservation (`"001"` remains string rather than integer `1`).
+- Rejection of duplicate headers, whitespace-only files, inconsistent row lengths, empty files, and header-only files.
+- Robust encoding detection across UTF-8, UTF-8-BOM, and Latin-1.
+- Ingestion error raised if raw cells exceed 512 characters or column headers exceed 64 characters.
 
 ### 2.2 Academic Validation (`tests/test_validation.py`)
-- `test_valid_dataset_passes_validation`: Verified well-formed data passes with zero errors.
-- `test_missing_required_column`: Verified missing mandatory columns (e.g. Student ID) are caught.
-- `test_duplicate_student_id_rejected`: Verified duplicate ID rows are flagged with line references.
-- `test_out_of_range_attendance`: Verified values `< 0`, `> 100`, or strings are rejected.
-- `test_out_of_range_subject_score`: Verified scores exceeding subject maximum (e.g., 55/50 in lab) are flagged.
-- `test_absent_mark_allowed_without_error`: Verified `"ABS"` strings are accepted as excused/absent (0 score).
+- Verified mandatory column verification and row-level constraint checks.
+- Unique student ID validation with case-insensitive collision detection.
+- Non-empty student names accepting arbitrary international Unicode characters.
+- Attendance validation within [0.0, 100.0] as finite numbers.
+- Subject score validation rejecting out-of-range, NaN, and positive/negative infinity.
+- Support for documented absence indicators (`ABS`, `ABSENT`) while rejecting unstandardized codes.
+- Length validation on student IDs ($\le 64$), names ($\le 128$), and departments ($\le 64$).
+- Rejection of dangerous Unicode bidirectional override sequences (`\u202e` etc.) and unprintable control characters.
+- Enforcement of error capping at 500 errors to prevent denial of service.
 
-### 2.3 Grading & Normalization (`tests/test_grading.py`)
-- `test_monotonic_grade_boundaries_validation`: Verified disordered grade brackets (e.g., B higher than A) raise `PolicyConfigurationError`.
-- `test_lowest_grade_must_start_at_zero`: Verified omission of 0% baseline raises `PolicyConfigurationError`.
-- `test_assign_grade_to_percentage`: Verified boundary thresholds map to exact letter grades (A+, A, B, etc.).
-- `test_proportional_normalization_heterogeneous_marks`: Verified mixed 100-mark theory and 50-mark lab courses compute correct proportional percentages.
-- `test_subject_level_fail_with_high_aggregate`: Verified student with 60% aggregate who fails one subject (<40%) receives overall `FAIL` status.
-- `test_attendance_warning_flag`: Verified attendance below 75% triggers `attendance_warning = True`.
+### 2.3 Grading, Numerical Precision & Policy Configuration (`tests/test_grading.py`)
+- **Default Grading Scale:** Verified 7-tier scale (`A+` down to `F`).
+- **School Grading Scale:** Verified 6-tier custom school policy (`A+`, `A`, `B`, `C`, `D`, `F`).
+- **College Grading Scale:** Verified 7-tier custom college policy (`O`, `E`, `A`, `B`, `C`, `P`, `F`).
+- **Custom Grade Labels:** Validated acceptance of arbitrary alphanumeric grade labels (e.g., `Distinction`, `Merit`, `Pass`, `Fail`).
+- **Policy Validation Invariants:**
+  - Rejection of duplicate grade labels (case-insensitive) (`PolicyConfigurationError`).
+  - Rejection of duplicate percentage thresholds (`PolicyConfigurationError`).
+  - Rejection of non-monotonic or ascending boundary order (`PolicyConfigurationError`).
+  - Rejection of missing 0.0% lowest baseline (`PolicyConfigurationError`).
+  - Rejection of boundaries with fewer than 2 tiers (`PolicyConfigurationError`).
+  - Rejection of non-finite or out-of-range percentages ($<0$ or $>100$).
+- **Per-Subject Passing Thresholds:** Verified `subject_pass_overrides` enforce course-specific passing cutoffs.
+- **Attendance Warning Policy:** Verified toggle (`enable_attendance_warning`) controls alert indicators without causing academic failure.
+- **Exact Boundary Preservation:** Verified full precision `raw_percentage` prevents premature rounding at pass/fail and grade boundaries (`39.996%` $\rightarrow$ FAIL, `40.0%` $\rightarrow$ PASS, `79.999%` $\rightarrow$ B+).
+- **Direct Invocation Fail-Safe Validation:** Strict validation inside `evaluate_students()` rejects corrupted data with `ValueError`.
 
 ### 2.4 Statistical Analytics (`tests/test_analytics.py`)
-- `test_class_summary_metrics`: Verified class averages, medians, standard deviations, extremes, and pass rates.
-- `test_subject_analytics_and_difficulty_ranking`: Verified subject metrics and difficulty ranking (Rank 1 = hardest).
-- `test_deterministic_top_performers_tie_breaking`: Verified multi-key sorting (Percentage $\rightarrow$ Attendance $\rightarrow$ Student ID).
-- `test_academic_attention_indicators`: Verified all 4 transparent heuristics (Conceptual Support, Critical Intervention, Subject Outlier, Borderline Pass) flag matching students.
-- `test_department_summary`: Verified group aggregation by department.
+- Class averages, medians, standard deviations, extremes, and pass rates.
+- Difficulty ranking (Rank 1 = most challenging).
+- Deterministic multi-key tie-breaking leaderboard.
+- Transparent academic attention indicators dynamically incorporating institutional passing and attendance thresholds.
+- Departmental comparative analytics.
 
 ### 2.5 Security & Sanitization (`tests/test_security.py`)
-- `test_defuse_formula_injection_triggers`: Verified `=`, `+`, `-`, `@`, `\t`, `\r` prefixes are neutralized with prepended `'`.
-- `test_generate_sanitized_csv_protects_exported_cells`: Verified full DataFrame export sanitization.
-- `test_file_size_limits`: Verified rejection of files exceeding 2 MB.
-- `test_binary_and_executable_rejection`: Verified rejection of null bytes and executable headers.
-- `test_csv_dimension_bounds`: Verified enforcement of 5,000 row and 30 column limits.
+- Formula injection (CWE-1236) neutralization across triggers: `=`, `+`, `-`, `@`, `\t`, `\r`, `%`.
+- Leading whitespace formula injection bypass protection (`"   =1+1"`, `"\t@SUM(...)"`, `"  +cmd|..."`).
+- Preservation of pre-escaped formula strings without redundant quote inflation.
+- Filename sanitization against directory traversal (`../../etc/passwd`, `..\\windows\\system32\\cmd.exe`), null bytes, control characters, and HTML tags (`<script>`).
+- Detection and rejection of Unicode bidirectional overrides (`\u202e`) and unprintable control characters.
+- Maximum file size (2 MB) and dimensional bounds (5,000 rows, 30 columns) enforcement.
+- Raw CSV cell length bounding ($\le 512$ characters) and header length bounding ($\le 64$ characters).
+- Validation error collection limit (capped at 500 errors).
 
-### 2.6 Concurrency & Session Isolation (`tests/test_sessions.py`)
-- `test_concurrent_session_isolation`: Executed 10 interleaved threads across 2 different datasets and policies simultaneously. Verified 0% data cross-contamination.
+### 2.6 Concurrency & Session State Integrity (`tests/test_sessions.py`)
+- Thread-safe isolation and zero cross-contamination across concurrent worker sessions.
+- Deterministic SHA-256 dataset fingerprinting and state reset on dataset modification.
+- Automated result invalidation (`is_analysis_stale`) on configuration mutation (grade boundaries, subject max marks, per-subject thresholds, attendance settings, institution metadata).
+- One-click reset clears institutional metadata, datasets, and configuration widgets.
+- Grade-boundary editor state retention: adding or removing a grade level preserves user-edited labels and percentage numbers without discarding previous entries.
+- Added regression test `test_grade_boundary_editor_preserves_user_edits_on_remove_tier`.
+- Added regression test `test_grade_boundary_editor_add_tier_at_low_percentage_avoids_duplicate`.
+- Added regression test `test_student_search_special_characters_regex_safety`.
+- Added UI-02.1 Workflow regression suite (Workflows A through F):
+  - `test_workflow_a_school_quick_demo_config_synchronization`: Verifies School demo populates exact settings and preserves clean analysis state on configuration review.
+  - `test_workflow_b_college_quick_demo_config_synchronization`: Verifies College demo synchronizes 50-mark lab weights (`Database_Lab`, `Web_Tech_Lab`, `Project_Phase_1`) and `Example College` grading preset (`O/E/A/B/C/P/F`).
+  - `test_workflow_c_open_config_without_change_preserves_analysis`: Confirms viewing configuration without edits does not flag analysis as stale.
+  - `test_workflow_d_change_subject_max_marks_invalidates_analysis`: Confirms mutating maximum marks immediately flags analysis as stale until re-evaluated.
+  - `test_workflow_e_switch_school_to_college_isolation`: Ensures switching between School and College demos completely replaces metadata, policy, and results with zero cross-contamination.
+  - `test_workflow_f_custom_upload_to_sample_and_back`: Confirms alternating between custom uploaded CSVs and sample datasets cleanly initializes mappings.
+
+### 2.7 Standalone CLI Operations (`tests/test_cli.py`)
+- Verified `main.py` subject configuration inference (labs/projects default to 50 max marks, theory to 100).
+- Verified format table helper renders cleanly with zero external dependency.
+- Verified end-to-end execution on `data/sample_school.csv`.
+- Verified end-to-end execution on `data/sample_college.csv` with `--export` option producing sanitized CSV.
+- Verified error handling and clean exit code 1 when input file is missing.
+- Verified error handling and clean exit code 1 when grade boundaries are non-monotonic or malformed.
 
 ---
 
 ## 3. Discovered Anomalies & Applied Resolutions
 
-During test execution, 3 specific edge cases were caught and resolved:
+1. **Student Explorer Regex Crash on Special Characters (Final Hardening):**
+   - *Problem:* When searching by Student Name or ID with regex characters (`[`, `(`, `*`, `+`), Pandas `str.contains(query)` raised unhandled `re.error` (e.g. `unterminated character set`).
+   - *Fix:* Configured `str.contains(query, regex=False, na=False)` in `app.py`, ensuring all queries are treated strictly as literal substrings.
+   - *Regression Test:* `test_student_search_special_characters_regex_safety` (PASSED).
 
-1. **Pandas Header Mangling on Duplicate Columns:**
-   - *Problem:* Pandas `pd.read_csv` silently renames duplicate headers from `['Math', 'Math']` to `['Math', 'Math.1']`.
-   - *Fix:* Added raw byte inspection using Python's `csv.reader` on the initial line before passing to Pandas, guaranteeing clean rejection of duplicate column headers.
-2. **Numpy Boolean Identity Comparison:**
-   - *Problem:* Comparing `np.bool_(False) is False` evaluates to `False` in Python due to object identity mismatch.
-   - *Fix:* Replaced identity `is` with standard boolean comparison `assert not val` and cast internal boolean flags with `bool()`.
-3. **Attention Rule Precedence Collision:**
-   - *Problem:* Student with attendance 88% and score 43% satisfied both Rule 1 (Attendance $\ge$ 85% + Score $<$ 50%) and Rule 4 (Borderline Pass 40-44%).
-   - *Fix:* Clarified rule definitions and calibrated test fixtures so each test student uniquely validates their targeted attention category.
+2. **Grade Boundary Editor Duplicate Thresholds on Low Tiers (Final Hardening):**
+   - *Problem:* When adding a grade level where the second-to-last tier was $\le 20\%$ (e.g. 10%), the calculation `max(10.0, prev_pct - 10.0)` computed `10.0%`, causing duplicate percentage error (`PolicyConfigurationError`).
+   - *Fix:* Updated calculation to divide in half (`round(prev_pct / 2.0, 1)`) when `prev_pct <= 20.0`, ensuring the new tier is strictly decreasing and never duplicates the lowest 0.0% boundary.
+   - *Regression Test:* `test_grade_boundary_editor_add_tier_at_low_percentage_avoids_duplicate` (PASSED).
+
+3. **Streamlit Execution from Arbitrary Working Directories (Final Hardening):**
+   - *Problem:* If Streamlit was launched from a different working directory, relative references `open("data/sample_school.csv")` failed.
+   - *Fix:* Anchored paths to `BASE_DIR = os.path.dirname(os.path.abspath(__file__))` in `app.py` and added directory fallback in `main.py`.
+
+4. **Grade Boundary Editor Data Loss on Add/Remove Tier (Fix 04):**
+   - *Problem:* When an educator edited custom grade labels or percentage numbers in Tab 2 and then clicked "➕ Add Grade Level" or "➖ Remove Grade Level", previous edits were discarded.
+   - *Fix:* Base tier addition and removal directly on `edited_boundaries` and synchronized `st.session_state.custom_boundaries = edited_boundaries`.
+
+5. **CSV Formula Injection Leading Whitespace Bypass (Fix 04):**
+   - *Problem:* Strings like `"   =1+1"` or `"\t@SUM(A1:A10)"` bypassed `.startswith(FORMULA_TRIGGERS)`.
+   - *Fix:* Updated `defuse_formula_injection()` to inspect `value.lstrip(" \t\r\n")` for formula triggers and prepended a single quote (`'`).
+
+6. **Oversized Individual CSV Cells DoS (Fix 04):**
+   - *Problem:* An individual cell with $>500$ KB of characters caused memory spikes and UI rendering hangs.
+   - *Fix:* Enforced `MAX_RAW_CELL_LENGTH = 512` in `core/loader.py`.
+
+7. **Quick-Demo Configuration Discrepancy & Invalidation (UI-02.1):**
+   - *Problem:* When educators executed a Quick Demo from Homepage and navigated to "Upload & Configure", widget controls defaulted to hardcoded School settings (100 marks for all subjects, Default preset) rather than reflecting the actual configuration used for the active analysis (e.g. College 50-mark labs and `Example College` preset), or inadvertently invalidated valid results upon page visit.
+   - *Fix:* Implemented unified `QuickDemoSpec` registry and dynamic widget defaulting in `PAGE_CONFIG` using `analysis_config`. Visiting the configuration without making changes keeps analysis valid; modifying any setting immediately marks analysis stale.
+   - *Regression Tests:* `test_workflow_a_school_quick_demo_config_synchronization` through `test_workflow_f_custom_upload_to_sample_and_back` (PASSED).
 
 ---
 
-## 4. Performance Benchmarks
+## 4. Performance & Resource Benchmarks
 
-- **CLI Execution Time (25 records, 6 subjects):** ~0.04 seconds.
-- **Full Test Suite Execution Time (31 tests):** 0.06 seconds.
-- **Memory Footprint:** Less than 45 MB peak RAM during full evaluation.
+Real benchmarks conducted on **macOS Darwin ARM64** / **Python 3.9.6**:
+
+### 4.1 Dataset Scaling Benchmarks
+
+| Dataset Size | Records | Total Processing Time | Ingestion + Validation | Grading + Analytics | Peak RAM Delta |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Small Cohort** | 20 students | **13.61 ms** | 6.84 ms | 6.77 ms | 0.56 MB |
+| **Standard Class** | 100 students | **13.84 ms** | 6.80 ms | 7.04 ms | 0.45 MB |
+| **Large Department** | 1,000 students | **105.32 ms** | 55.43 ms | 49.89 ms | 2.79 MB |
+| **Maximum Allowed** | 5,000 students | **514.83 ms** | 272.93 ms | 241.90 ms | 12.66 MB |
+
+### 4.2 Multi-User Concurrency Benchmarks
+
+| Simulated Users | Total Time | Avg Latency | Peak RAM | Data Isolation |
+| :--- | :---: | :---: | :---: | :---: |
+| **1 User** | 14.16 ms | 11.36 ms | 0.65 MB | Verified 100% Isolated |
+| **5 Users** | 35.32 ms | 12.51 ms | 0.44 MB | Verified 100% Isolated |
+| **10 Users** | 67.45 ms | 14.20 ms | 0.58 MB | Verified 100% Isolated |
+| **20 Users** | 126.01 ms | 13.82 ms | 0.48 MB | Verified 100% Isolated |
+
+---
+
+## 5. Verification Sign-Off
+
+- **Automated Unit & Integration Tests:** 145/145 PASSED (100%)
+- **CLI Sample School Dataset:** Verified PASSED (0 errors, full report generated)
+- **CLI Sample College Dataset:** Verified PASSED (0 errors, full report generated)
+- **CLI Custom Policy & Overrides:** Verified PASSED (0 errors, metadata reflected)
+- **GitHub Actions CI Matrix:** Python 3.9, 3.10, 3.11 with `permissions: contents: read` verified
+- **Overall Quality Status:** **PRODUCTION READY**
